@@ -1,108 +1,108 @@
-﻿# Sumopod AI Chat (Gradio + MCP Gmail/Calendar/Contacts)
+﻿# Chat MCP Google
 
-Aplikasi chat berbasis Gradio yang menghubungkan LLM ke 3 MCP server:
+[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/downloads/)
+![Package Manager: uv](https://img.shields.io/badge/package%20manager-uv-4B5563)
+![UI: Gradio](https://img.shields.io/badge/UI-Gradio-f97316)
+![Protocol: MCP](https://img.shields.io/badge/protocol-MCP-111827)
+![Validation: Pydantic](https://img.shields.io/badge/validation-Pydantic-E92063)
+![Tests: pytest](https://img.shields.io/badge/tests-pytest-22c55e)
+
+A production-oriented Gradio chat application that integrates LLM tool-calling with three Google-focused MCP servers:
 - Gmail (IMAP/SMTP)
 - Google Calendar (CalDAV)
 - Google Contacts (CardDAV)
 
-App mendukung dua backend model:
-- Gemini langsung (`google-generativeai`)
-- OpenAI-compatible endpoint (`BASE_URL` + `API_KEY`)
+The application supports two model backends:
+- Direct Gemini models via `google-generativeai`
+- OpenAI-compatible models via `BASE_URL` and `API_KEY`
 
-## Fitur
+## Key Features
 
-- Chat UI interaktif via Gradio.
-- Tool-calling otomatis ke MCP Gmail, Calendar, Contacts.
-- Pilih model langsung dari dropdown.
-- Retry pesan terakhir dan clear chat.
-- Logging detail ke `chat_app.log`.
-- Metrik request ke `metrics.jsonl`.
+- Gradio chat interface with model selection.
+- Automatic MCP tool discovery and tool-calling.
+- Integrated Gmail, Calendar, and Contacts actions.
+- Request-level metrics in `metrics.jsonl`.
+- Runtime logs in `chat_app.log`.
+- Pydantic-based validation for app settings, payload normalization, and tool inputs.
 
-## Arsitektur
+## Quick Start
 
-Alur `chat_service`:
-1. Jalankan 3 MCP server via stdio (`uv run python <server>.py`).
-2. Ambil schema tools tiap server.
-3. Kirim prompt ke model terpilih.
-4. Saat model meminta tool, jalankan tool MCP terkait.
-5. Kirim hasil tool kembali ke model hingga jawaban final.
+```powershell
+Copy-Item .env.template .env
+uv sync
+uv run python app.py
+```
+
+## Architecture
+
+The `chat_service` flow is:
+1. Start MCP servers through stdio (`uv run python <server>.py`).
+2. Collect tool schemas from each server.
+3. Send user input to the selected model backend first.
+4. The model either responds directly or requests a tool call.
+5. If a tool call is requested, execute the corresponding MCP tool and return the result to the model.
 
 ```mermaid
-flowchart LR
+flowchart TD
     U[User] --> UI[Gradio UI<br/>src/chat_google/ui.py]
     UI --> CS[Chat Service<br/>src/chat_google/chat_service.py]
 
-    CS -->|gemini*| G[Gemini API]
-    CS -->|non-gemini| O[OpenAI-compatible API<br/>BASE_URL/v1/chat/completions]
+    CS --> MCPREG[Initialize MCP sessions<br/>and collect tool schemas]
+    CS --> LLM[Selected LLM backend<br/>Gemini or OpenAI-compatible]
 
-    CS <-->|stdio MCP| MG[gmail_server.py]
-    CS <-->|stdio MCP| MC[calendar_server.py]
-    CS <-->|stdio MCP| MT[contacts_server.py]
+    LLM --> DEC{Tool call needed?}
+    DEC -- No --> RESP[Direct model response]
+    DEC -- Yes --> TOOL[Execute requested MCP tool]
+
+    TOOL --> MG[gmail_server.py]
+    TOOL --> MC[calendar_server.py]
+    TOOL --> MT[contacts_server.py]
 
     MG --> GI[Gmail IMAP/SMTP]
     MC --> GC[Google Calendar CalDAV]
     MT --> GCT[Google Contacts CardDAV]
 
+    TOOL --> LLM
+    RESP --> UI
+
     CS --> L[chat_app.log]
     CS --> M[metrics.jsonl]
 ```
 
-## Struktur Repo (Refactor)
+## Repository Layout
 
-- `app.py`: entrypoint UI (wrapper, backward-compatible).
-- `gmail_server.py`: wrapper entrypoint MCP Gmail.
-- `calendar_server.py`: wrapper entrypoint MCP Calendar.
-- `contacts_server.py`: wrapper entrypoint MCP Contacts.
-- `src/chat_google/chat_service.py`: orchestration chat + tool-calling.
-- `src/chat_google/ui.py`: komponen dan wiring Gradio.
-- `src/chat_google/constants.py`: daftar model + system prompts.
-- `src/chat_google/models.py`: model validasi berbasis Pydantic (settings, message, metrics, server config).
-- `src/chat_google/mcp_servers/gmail_server.py`: implementasi tools Gmail.
-- `src/chat_google/mcp_servers/calendar_server.py`: implementasi tools Calendar.
-- `src/chat_google/mcp_servers/contacts_server.py`: implementasi tools Contacts.
-- `tests/`: test unit komprehensif semua tools + flow chat.
-- `requirements.txt`: dependency runtime.
-- `requirements-dev.txt`: dependency runtime + test.
-- `pyproject.toml`: konfigurasi pytest.
+- `app.py`: UI entrypoint (backward-compatible wrapper).
+- `gmail_server.py`: Gmail MCP wrapper entrypoint.
+- `calendar_server.py`: Calendar MCP wrapper entrypoint.
+- `contacts_server.py`: Contacts MCP wrapper entrypoint.
+- `src/chat_google/chat_service.py`: main orchestration logic.
+- `src/chat_google/ui.py`: Gradio UI composition and event wiring.
+- `src/chat_google/constants.py`: model list and default model resolver.
+- `src/chat_google/models.py`: shared Pydantic models.
+- `src/chat_google/mcp_servers/*.py`: MCP server implementations.
+- `tests/`: comprehensive async/unit test suite.
+- `requirements.txt`: runtime dependencies.
+- `requirements-dev.txt`: runtime + test dependencies.
+- `pyproject.toml`: pytest configuration.
+- `readme-id.md`: short pointer note to the primary English `README.md`.
 
-## Prasyarat
+## Prerequisites
 
 - Python 3.10+
-- `uv` terpasang dan ada di PATH.
-- Akun Google dengan 2-Step Verification + App Password.
+- `uv` installed and available in `PATH`
+- Google account with:
+  - 2-Step Verification enabled
+  - App Password enabled and generated
 
-## Panduan Mendapatkan Google App Key (Akun Personal)
+## Configuration
 
-Google App Key = Google App Password (16 karakter) yang dipakai untuk `GOOGLE_APP_KEY`.
-
-1. Login ke akun Google personal Anda di `https://myaccount.google.com/`.
-2. Buka menu `Security`.
-3. Aktifkan `2-Step Verification` jika belum aktif.
-4. Buka halaman App Passwords: `https://myaccount.google.com/apppasswords`.
-5. Pada pilihan app/device:
-   - App: pilih `Mail` (atau `Other (Custom name)` lalu isi misalnya `Sumopod Chat`).
-   - Device: pilih device yang sesuai (atau custom).
-6. Klik `Generate`.
-7. Salin password 16 karakter yang muncul, lalu isi ke `.env`:
-   - `GOOGLE_ACCOUNT=alamatgmailanda@gmail.com`
-   - `GOOGLE_APP_KEY=<16-char-app-password>`
-
-Catatan penting:
-- App Password hanya muncul jika 2-Step Verification aktif.
-- Opsi App Password bisa tidak muncul untuk akun Workspace yang dibatasi admin, akun dengan Advanced Protection, atau konfigurasi 2SV tertentu (mis. security key only).
-- Saat password akun Google utama diubah, App Password biasanya ikut dicabut dan perlu generate ulang.
-
-## Environment
-
-Gunakan `.env.template` sebagai starter config:
+Use the template to initialize environment variables:
 
 ```powershell
 Copy-Item .env.template .env
 ```
 
-Lalu edit nilai di `.env` sesuai akun dan API key Anda.
-
-Buat `.env` di root:
+Then edit `.env`:
 
 ```env
 GOOGLE_ACCOUNT=you@example.com
@@ -113,35 +113,50 @@ API_KEY=your_api_key
 MODEL=gemini-3-flash-preview
 ```
 
-Keterangan:
-- `GOOGLE_ACCOUNT` + `GOOGLE_APP_KEY` dipakai oleh semua MCP server.
-- Model `gemini*` menggunakan `GOOGLE_GEMINI_API_KEY`.
-- Model non-Gemini menggunakan `BASE_URL` + `API_KEY`.
-- `MODEL` dipakai sebagai default awal model di dropdown UI (jika valid dan ada di daftar model tersedia).
+Variable reference:
+- `GOOGLE_ACCOUNT`: Google account used by Gmail/Calendar/Contacts MCP servers.
+- `GOOGLE_APP_KEY`: Google App Password (16 characters, no spaces).
+- `GOOGLE_GEMINI_API_KEY`: required for models that start with `gemini`.
+- `BASE_URL`: OpenAI-compatible API base URL for non-Gemini models.
+- `API_KEY`: bearer token for `BASE_URL`.
+- `MODEL`: initial default model for the UI dropdown (must exist in available model list).
 
-## Workflow uv yang Rapi
+## How to Get Google App Password (Personal Account)
 
-Gunakan workflow ini agar dependency project tersinkron dengan benar:
+1. Open `https://myaccount.google.com/`.
+2. Go to `Security`.
+3. Enable `2-Step Verification`.
+4. Open App Passwords: `https://myaccount.google.com/apppasswords`.
+5. Generate an app password for Mail (or a custom app name).
+6. Put the generated 16-character password into `GOOGLE_APP_KEY`.
+
+Important notes:
+- App Passwords are only available when 2-Step Verification is enabled.
+- App Passwords may be blocked by organization policies (Workspace admin), Advanced Protection, or strict 2SV configurations.
+- Changing the main Google account password may revoke existing App Passwords.
+
+## Recommended uv Workflow
+
+For stable and reproducible setup:
 
 ```powershell
 uv sync
 uv run python app.py
 ```
 
-Catatan:
-- `uv sync` = install/sync dependency project ke environment `uv`.
-- `uv run` = menjalankan command di environment tersebut.
-- Jika langsung `uv run ...`, `uv` bisa tetap resolve dependency, tapi untuk workflow team/proyek disarankan tetap `uv sync` dulu.
+Notes:
+- `uv sync` installs/synchronizes project dependencies.
+- `uv run` executes commands in the resolved environment.
 
-## Menjalankan App
+## Run the Application
 
 ```powershell
 uv run python app.py
 ```
 
-Default URL Gradio: `http://127.0.0.1:7860`.
+Default local URL: `http://127.0.0.1:7860`
 
-## Menjalankan MCP Server Manual
+## Run MCP Servers Manually
 
 ```powershell
 uv run python gmail_server.py
@@ -149,7 +164,7 @@ uv run python calendar_server.py
 uv run python contacts_server.py
 ```
 
-## Daftar Tools MCP
+## MCP Tools
 
 ### Gmail
 - `list_recent_emails(count=5)`
@@ -172,62 +187,49 @@ uv run python contacts_server.py
 - `list_contacts(limit=10)`
 - `search_contacts(query)`
 
-## Testing (Comprehensive)
+## Testing
 
-Install dependency test dan jalankan seluruh suite dengan `uv`:
+Run the full test suite with `uv`:
 
 ```powershell
 uv run --with pytest --with pytest-asyncio --with-requirements requirements.txt pytest -q
 ```
 
-Cakupan test saat ini:
-- `tests/test_gmail_server.py`: semua tool Gmail (9 tool), termasuk path sukses/error utama.
-- `tests/test_calendar_server.py`: semua tool Calendar (4 tool), termasuk fallback saat kalender tidak tersedia.
-- `tests/test_contacts_server.py`: semua tool Contacts (2 tool), termasuk parsing CardDAV dan no-match.
-- `tests/test_chat_service.py`: flow utama `chat()` untuk:
-  - empty message
-  - sanitasi schema
-  - Gemini missing key
-  - Gemini tool-call roundtrip
-  - OpenAI-compatible non-200
-  - OpenAI-compatible tool-call + streaming
+Coverage includes:
+- All Gmail tools
+- All Calendar tools
+- All Contacts tools
+- Core chat orchestration paths (Gemini, OpenAI-compatible, streaming, tool-calls, payload normalization)
+- Default model resolution behavior
 
-Catatan implementasi:
-- `chat_service` memakai Pydantic untuk validasi input internal:
-  - runtime env settings
-  - history message shape
-  - MCP server config
-  - metrics record sebelum ditulis ke `metrics.jsonl`
-- Semua tool MCP juga memakai Pydantic untuk validasi argumen input (mis. `count`, `days`, `duration_minutes`, `query`, `email_id`).
+## Observability
 
-Hasil terakhir:
-- `27 passed`.
-
-## Logging & Metrics
-
-- `chat_app.log`: log proses dan error.
-- `metrics.jsonl`: metrik per request (timestamp, model, duration, tools/server yang dipanggil, status).
+- `chat_app.log`: runtime logs and error details.
+- `metrics.jsonl`: per-request telemetry (timestamp, model, duration, tool/server usage, status).
 
 ## Troubleshooting
 
-1. MCP tidak kebaca tools
-- Pastikan `uv` tersedia.
-- Cek dependency runtime terpasang.
-- Jalankan server manual (perintah di atas).
+1. MCP tools are unavailable
+- Confirm `uv` is installed and in `PATH`.
+- Confirm dependencies are synced (`uv sync`).
+- Start MCP servers manually and inspect errors.
 
-2. Gagal autentikasi Google
-- Pastikan App Password valid.
-- Pastikan 2-Step Verification aktif.
+2. Google authentication fails
+- Verify `GOOGLE_ACCOUNT` and `GOOGLE_APP_KEY`.
+- Confirm 2-Step Verification is enabled.
+- Regenerate App Password if needed.
 
-3. Model Gemini gagal
-- Cek `GOOGLE_GEMINI_API_KEY`.
-- Jika kuota habis, gunakan model non-Gemini.
+3. Gemini requests fail
+- Check `GOOGLE_GEMINI_API_KEY`.
+- Confirm model name starts with `gemini`.
 
-4. Model non-Gemini gagal
-- Cek `BASE_URL` + `API_KEY`.
-- Pastikan endpoint support tool-calling.
+4. Non-Gemini requests fail
+- Verify `BASE_URL` and `API_KEY`.
+- Confirm your endpoint supports chat completions and tool-calling.
 
-## Keamanan
+## Security Notes
 
-- `.env`, `chat_app.log`, `metrics.jsonl` sudah sebaiknya di-ignore git.
-- App memiliki akses ke email, kalender, dan kontak asli Anda.
+- Never commit `.env`.
+- Treat logs and metrics as potentially sensitive data.
+- Run this application only in trusted environments.
+
