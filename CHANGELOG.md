@@ -7,6 +7,12 @@ All notable changes to this project will be documented in this file.
 ### Added
 - None yet.
 
+## [1.1.1] - 2026-02-13
+
+### Added
+- Added comprehensive pseudocode documentation for chat app orchestration and all MCP servers/tools in `docs/`.
+- Added time complexity analysis and performance improvement proposals in `docs/time-complexity-analysis.md`.
+
 ## [1.1.0] - 2026-02-13
 
 ### Added
