@@ -20,9 +20,27 @@ DEFINE pydantic input models for all tools
 ### `_get_access_token()`
 
 ```text
-READ GOOGLE_DRIVE_ACCESS_TOKEN from env
-IF missing -> raise ValueError
-RETURN token
+TRY cached access token first (if still valid)
+
+IF full refresh config exists:
+    - GOOGLE_DRIVE_REFRESH_TOKEN
+    - GOOGLE_OAUTH_CLIENT_ID
+    - GOOGLE_OAUTH_CLIENT_SECRET
+THEN:
+    POST refresh request to https://oauth2.googleapis.com/token
+    read new access token + expires_in
+    cache token with safety margin
+    return refreshed token
+    if refresh fails and static token exists, fallback to static token
+
+ELSE IF partial refresh config exists:
+    return configuration error (or fallback to static token if present)
+
+ELSE IF GOOGLE_DRIVE_ACCESS_TOKEN exists:
+    return static token
+
+ELSE:
+    raise ValueError with required env vars
 ```
 
 ### `_auth_headers(token)`
@@ -80,7 +98,7 @@ RETURN RFC3339 string ending with "Z"
 
 ```text
 1. Build full URL
-2. Attach bearer token authorization
+2. Resolve bearer token via _get_access_token (supports refresh flow)
 3. Execute HTTP request with timeout and redirects enabled
 4. Validate expected status codes
 5. Parse response (JSON/bytes) or return standardized error text

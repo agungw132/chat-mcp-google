@@ -1,1 +1,1 @@
-"""MCP server implementations for Gmail, Calendar, Contacts, and Drive."""
+"""MCP server implementations for Gmail, Calendar, Contacts, Drive, and Maps."""

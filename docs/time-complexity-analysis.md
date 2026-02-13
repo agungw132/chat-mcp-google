@@ -7,16 +7,17 @@ This analysis is based on:
 - `docs/pseudocode-mcp-calendar.md`
 - `docs/pseudocode-mcp-contacts.md`
 - `docs/pseudocode-mcp-drive.md`
+- `docs/pseudocode-mcp-maps.md`
 
 ## 1) Notation
 
 - `H`: number of chat history messages
 - `X`: total normalized text size across `history + user message`
-- `S`: number of MCP servers (currently 4)
+- `S`: number of MCP servers (currently 5)
 - `T`: total number of discovered MCP tools (across all servers)
 - `R`: number of tool-calling rounds in one model request
 - `C`: total tool calls in one request
-- `N`: number of items returned by an external provider (emails/events/files/contacts)
+- `N`: number of items returned by an external provider (emails/events/files/contacts/places/routes)
 - `L`: user-requested list limit (typically <= 100)
 - `F`: number of CardDAV contact links
 - `B`: contacts fetch batch size (`FETCH_BATCH_SIZE`, currently 20)
@@ -126,6 +127,9 @@ Largest recurring overhead is repeated MCP session bootstrap (`uv run python <se
 
 ## 6.1 Tool complexity summary
 
+- Drive token resolution:
+- cached token path: `O(1)`
+- refresh path on expiry: `O(1)` logic + 1 OAuth token HTTP request
 - `list_drive_files(limit=L)`: `O(L)`.
 - `search_drive_files(limit=L)`: `O(L)`.
 - `get_drive_file_metadata`: `O(1)`.
@@ -150,9 +154,26 @@ Largest recurring overhead is repeated MCP session bootstrap (`uv run python <se
 
 - Reading large text files fully before truncation can waste bandwidth/time.
 
-## 7) End-to-End Hotspots (Priority Order)
+## 7) Maps MCP Complexity
 
-## 7.1 P1 - Reuse MCP sessions across chat requests
+## 7.1 Tool complexity summary
+
+- `search_places_text(limit=L)`: `O(L)` formatting on returned place results.
+- `geocode_address(limit=L)`: `O(L)` formatting on geocode candidates.
+- `reverse_geocode(limit=L)`: `O(L)` formatting on reverse-geocode candidates.
+- `get_place_details(place_id)`: `O(1)` data extraction from one payload.
+- `get_directions(...)`:
+- route scan `O(Routes * Legs)` with small practical caps (`<=3` routes when alternatives enabled).
+- each leg contributes constant-time aggregation for distance/duration.
+
+## 7.2 Bottleneck notes
+
+- Directions complexity depends on number of returned route legs; inter-city routes with many legs increase parsing work.
+- Most latency is external API/network, not local CPU.
+
+## 8) End-to-End Hotspots (Priority Order)
+
+## 8.1 P1 - Reuse MCP sessions across chat requests
 
 Current behavior starts and initializes all servers for every request.
 
@@ -162,7 +183,7 @@ Current behavior starts and initializes all servers for every request.
 - Reconnect only on failure.
 - Expected impact: significant latency reduction per chat turn.
 
-## 7.2 P1 - Optimize Contacts `search_contacts` fallback path
+## 8.2 P1 - Optimize Contacts `search_contacts` fallback path
 
 - Current worst case `O(F)` with many GET calls even when only top 1-5 matches needed.
 - Improvement options:
@@ -171,7 +192,7 @@ Current behavior starts and initializes all servers for every request.
 - Stop fetching as soon as enough high-confidence matches found.
 - Expected impact: major reduction for large address books.
 
-## 7.3 P1 - Parallelize independent tool calls in a round
+## 8.3 P1 - Parallelize independent tool calls in a round
 
 - Current execution is sequential per tool call.
 - Improvement:
@@ -181,7 +202,7 @@ Current behavior starts and initializes all servers for every request.
 - session/client thread-safety is guaranteed (or separated by server/session).
 - Expected impact: lower round latency when model emits multiple independent calls.
 
-## 7.4 P2 - Cap context growth in multi-round orchestration
+## 8.4 P2 - Cap context growth in multi-round orchestration
 
 - Repeatedly appending tool outputs can increase request payload size across rounds.
 - Improvement:
@@ -189,14 +210,14 @@ Current behavior starts and initializes all servers for every request.
 - Keep only latest relevant turns + structured memory summary.
 - Expected impact: reduced model latency/cost and lower timeout probability.
 
-## 7.5 P2 - Stream/truncate Drive file reads earlier
+## 8.5 P2 - Stream/truncate Drive file reads earlier
 
 - `read_drive_text_file` downloads full content before truncation.
 - Improvement:
 - Use ranged reads/streaming and stop after `max_chars` threshold when feasible.
 - Expected impact: better performance on large files.
 
-## 7.6 P2 - Reduce unnecessary sorting in Calendar lists
+## 8.6 P2 - Reduce unnecessary sorting in Calendar lists
 
 - `sorted(results)` introduces `O(N log N)`.
 - Improvement:
@@ -204,7 +225,7 @@ Current behavior starts and initializes all servers for every request.
 - or request sorted order upstream.
 - Expected impact: moderate CPU savings for larger event sets.
 
-## 7.7 P3 - Batch IMAP fetch patterns in Gmail tools
+## 8.7 P3 - Batch IMAP fetch patterns in Gmail tools
 
 - Several tools fetch message headers one-by-one.
 - Improvement:
@@ -212,7 +233,19 @@ Current behavior starts and initializes all servers for every request.
 - Minimize repeated mailbox select calls.
 - Expected impact: moderate latency reduction for larger `count` values.
 
-## 8) Suggested Implementation Roadmap
+## 8.8 P3 - Add response caching for frequent Maps lookups
+
+- Repeated geocode/place details for the same query can trigger duplicate API calls.
+- Improvement:
+- Cache normalized query responses with short TTL (for example 1 to 10 minutes).
+- Cache keys:
+- `search_places_text`: (`query`,`language`,`region`,`limit`)
+- `geocode_address`: (`address`,`language`,`region`,`limit`)
+- `get_place_details`: (`place_id`,`language`)
+- `get_directions`: (`origin`,`destination`,`mode`,`alternatives`,`units`)
+- Expected impact: lower cost and faster responses on repeated lookups.
+
+## 9) Suggested Implementation Roadmap
 
 ## Phase A (highest ROI)
 
@@ -231,13 +264,16 @@ Current behavior starts and initializes all servers for every request.
 1. Gmail fetch batching refinements.
 2. Additional perf telemetry (per-step timing, cache hit rate, queue depth).
 
-## 9) Optional Metrics to Track After Improvements
+## 10) Optional Metrics to Track After Improvements
 
 - `mcp_session_init_ms` and session reuse ratio
 - `tool_round_count` and `tool_call_count`
 - `contacts_search_links_scanned`
 - `contacts_search_fallback_used`
 - `drive_read_bytes_downloaded`
+- `maps_cache_hit_rate`
+- `maps_request_count_by_tool`
+- `maps_error_status_count`
 - `model_payload_chars_per_round`
 - `p50/p95/p99` end-to-end latency per model and per tool
 

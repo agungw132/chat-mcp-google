@@ -11,6 +11,7 @@ mcp = FastMCP("GoogleDrive")
 
 DRIVE_API_BASE = "https://www.googleapis.com/drive/v3"
 DRIVE_UPLOAD_API_BASE = "https://www.googleapis.com/upload/drive/v3"
+GOOGLE_OAUTH_TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token"
 HTTP_TIMEOUT = httpx.Timeout(timeout=20.0, connect=5.0)
 GOOGLE_WORKSPACE_MIME_PREFIX = "application/vnd.google-apps."
 SUPPORTED_TEXT_MIME_TYPES = {
@@ -27,6 +28,10 @@ SUPPORTED_TEXT_MIME_TYPES = {
     "application/x-www-form-urlencoded",
 }
 SHARE_ROLES = {"reader", "commenter", "writer"}
+TOKEN_EXPIRY_SAFETY_MARGIN_SECONDS = 60
+
+_CACHED_ACCESS_TOKEN: str | None = None
+_CACHED_ACCESS_TOKEN_EXPIRES_AT: datetime | None = None
 
 
 class _ListDriveFilesInput(BaseModel):
@@ -103,11 +108,118 @@ class _CreateDrivePublicLinkInput(BaseModel):
     allow_discovery: bool = False
 
 
-def _get_access_token() -> str:
-    token = os.getenv("GOOGLE_DRIVE_ACCESS_TOKEN")
+def _get_cached_access_token() -> str | None:
+    global _CACHED_ACCESS_TOKEN, _CACHED_ACCESS_TOKEN_EXPIRES_AT
+    if not _CACHED_ACCESS_TOKEN or not _CACHED_ACCESS_TOKEN_EXPIRES_AT:
+        return None
+    if datetime.now(timezone.utc) >= _CACHED_ACCESS_TOKEN_EXPIRES_AT:
+        _CACHED_ACCESS_TOKEN = None
+        _CACHED_ACCESS_TOKEN_EXPIRES_AT = None
+        return None
+    return _CACHED_ACCESS_TOKEN
+
+
+def _set_cached_access_token(token: str, expires_in_seconds: int) -> None:
+    global _CACHED_ACCESS_TOKEN, _CACHED_ACCESS_TOKEN_EXPIRES_AT
+    safe_ttl = max(0, int(expires_in_seconds) - TOKEN_EXPIRY_SAFETY_MARGIN_SECONDS)
+    _CACHED_ACCESS_TOKEN = token
+    _CACHED_ACCESS_TOKEN_EXPIRES_AT = datetime.now(timezone.utc) + timedelta(seconds=safe_ttl)
+
+
+def _refresh_access_token(
+    refresh_token: str,
+    client_id: str,
+    client_secret: str,
+) -> tuple[str, int]:
+    payload = {
+        "grant_type": "refresh_token",
+        "refresh_token": refresh_token,
+        "client_id": client_id,
+        "client_secret": client_secret,
+    }
+    with httpx.Client(**_client_kwargs()) as client:
+        response = client.post(GOOGLE_OAUTH_TOKEN_ENDPOINT, data=payload)
+
+    if response.status_code != 200:
+        detail = ""
+        try:
+            body = response.json()
+            error = body.get("error", "")
+            error_description = body.get("error_description", "")
+            detail = f"{error}: {error_description}".strip(": ").strip()
+        except Exception:
+            detail = response.text.strip()[:300]
+        detail_part = f" - {detail}" if detail else ""
+        raise ValueError(
+            f"Drive OAuth refresh failed with HTTP {response.status_code}{detail_part}"
+        )
+
+    try:
+        data = response.json()
+    except Exception as exc:
+        raise ValueError(f"Drive OAuth refresh response parse error: {exc}") from exc
+
+    token = str(data.get("access_token", "")).strip()
     if not token:
-        raise ValueError("GOOGLE_DRIVE_ACCESS_TOKEN must be set in .env")
-    return token
+        raise ValueError("Drive OAuth refresh response missing access_token")
+
+    expires_in_raw = data.get("expires_in", 3600)
+    try:
+        expires_in = int(expires_in_raw)
+    except Exception:
+        expires_in = 3600
+    return token, expires_in
+
+
+def _get_access_token() -> str:
+    cached = _get_cached_access_token()
+    if cached:
+        return cached
+
+    static_token = (os.getenv("GOOGLE_DRIVE_ACCESS_TOKEN") or "").strip()
+    refresh_token = (os.getenv("GOOGLE_DRIVE_REFRESH_TOKEN") or "").strip()
+    client_id = (os.getenv("GOOGLE_OAUTH_CLIENT_ID") or "").strip()
+    client_secret = (os.getenv("GOOGLE_OAUTH_CLIENT_SECRET") or "").strip()
+
+    has_any_refresh_inputs = any([refresh_token, client_id, client_secret])
+    has_full_refresh_inputs = all([refresh_token, client_id, client_secret])
+
+    if has_full_refresh_inputs:
+        try:
+            refreshed_token, expires_in = _refresh_access_token(
+                refresh_token=refresh_token,
+                client_id=client_id,
+                client_secret=client_secret,
+            )
+            _set_cached_access_token(refreshed_token, expires_in)
+            os.environ["GOOGLE_DRIVE_ACCESS_TOKEN"] = refreshed_token
+            return refreshed_token
+        except Exception as exc:
+            if static_token:
+                return static_token
+            raise ValueError(f"Failed to refresh Drive access token: {exc}") from exc
+
+    if has_any_refresh_inputs and not has_full_refresh_inputs:
+        missing = []
+        if not refresh_token:
+            missing.append("GOOGLE_DRIVE_REFRESH_TOKEN")
+        if not client_id:
+            missing.append("GOOGLE_OAUTH_CLIENT_ID")
+        if not client_secret:
+            missing.append("GOOGLE_OAUTH_CLIENT_SECRET")
+        if static_token:
+            return static_token
+        raise ValueError(
+            "Incomplete Drive OAuth refresh configuration. Missing: " + ", ".join(missing)
+        )
+
+    if static_token:
+        return static_token
+
+    raise ValueError(
+        "Set GOOGLE_DRIVE_ACCESS_TOKEN or configure refresh flow with "
+        "GOOGLE_DRIVE_REFRESH_TOKEN, GOOGLE_OAUTH_CLIENT_ID, and GOOGLE_OAUTH_CLIENT_SECRET in .env"
+    )
 
 
 def _client_kwargs() -> dict:

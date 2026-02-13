@@ -35,22 +35,20 @@ DEFAULT_MODEL = resolve_default_model()
 
 SYSTEM_INSTRUCTION = (
     "You are a helpful AI assistant. Respond in English. "
-    "You can access Gmail, Calendar, Contacts, and Drive using the available tools. "
+    "You can access Gmail, Calendar, Contacts, Drive, and Google Maps using the available tools. "
     "Use tools only when needed and only if relevant to the user request. "
     "Calendar tool capabilities: add_event supports only summary, start_time, duration_minutes, and description. "
     "Calendar tool does not support structured attendees or location fields. "
     "If user requests invite attendees or specific location, include those details in description and clearly state the limitation. "
-    "Do not use Gmail/Drive/Contacts tools to search public place addresses. "
-    "If user asks to find an address on the public web/maps, skip address lookup and continue with available data."
+    "Use Google Maps tools for place search, address lookup, and directions when the user requests location-related tasks."
 )
 
 OPENAI_SYSTEM_INSTRUCTION = (
     "You are a helpful AI assistant. Respond in English. "
-    "You can access Gmail, Google Calendar, Google Contacts, and Google Drive using the available tools. "
+    "You can access Gmail, Google Calendar, Google Contacts, Google Drive, and Google Maps using the available tools. "
     "Use tools only when needed and only if relevant to the user request. "
     "Google Calendar add_event supports only summary, start_time, duration_minutes, and description. "
     "Google Calendar add_event does not support structured attendees or location fields. "
     "If user requests invite attendees or specific location, include those details in description and clearly state the limitation. "
-    "Do not use Gmail/Drive/Contacts tools to search public place addresses. "
-    "If user asks to find an address on the public web/maps, skip address lookup and continue with available data."
+    "Use Google Maps tools for place search, address lookup, and directions when the user requests location-related tasks."
 )

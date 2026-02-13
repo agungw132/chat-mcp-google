@@ -27,7 +27,7 @@ IF executed as script:
 
 ```text
 CREATE Gradio Blocks with title "Sumopod AI Chat"
-RENDER heading: "Sumopod AI Chat (Gmail, Calendar, Contacts, Drive)"
+RENDER heading: "Sumopod AI Chat (Gmail, Calendar, Contacts, Drive, Maps)"
 CREATE chatbot component
 CREATE textbox for user prompt + Retry button
 CREATE model dropdown with AVAILABLE_MODELS, default DEFAULT_MODEL + Clear button
@@ -86,7 +86,7 @@ DEFINE system instruction variants:
 
 ```text
 ServerConfig:
-    name in {"gmail","calendar","contacts","drive"}
+    name in {"gmail","calendar","contacts","drive","maps"}
     script non-empty string
 
 RuntimeSettings:
@@ -109,7 +109,7 @@ MetricsRecord:
 ```text
 1. Normalize user/history payloads
 2. Load runtime config from .env
-3. Start MCP stdio sessions (gmail/calendar/contacts/drive)
+3. Start MCP stdio sessions (gmail/calendar/contacts/drive/maps)
 4. Build tool schemas for selected model family (Gemini vs OpenAI-compatible)
 5. Execute multi-round tool-calling loop
 6. Apply special behavior:
@@ -131,6 +131,7 @@ RETURN list:
     ("calendar", "calendar_server.py")
     ("contacts", "contacts_server.py")
     ("drive", "drive_server.py")
+    ("maps", "maps_server.py")
 ```
 
 ### `load_runtime_settings()`
@@ -360,6 +361,7 @@ Files:
 - `calendar_server.py`
 - `contacts_server.py`
 - `drive_server.py`
+- `maps_server.py`
 
 Pattern:
 
@@ -367,4 +369,33 @@ Pattern:
 Inject ./src into sys.path
 Import run() from src/chat_google/mcp_servers/<server>_server.py
 Execute run() when file is run as script
+```
+
+## 7) Programmatic Key Provisioning Scripts
+
+Root utility scripts:
+
+- `get_google_drive_access_token.py`
+- `get_google_maps_api_key.py`
+- `get_google_app_key.py`
+
+High-level behavior:
+
+```text
+Drive token script:
+    - run OAuth installed-app flow
+    - print token
+    - optionally upsert GOOGLE_DRIVE_ACCESS_TOKEN in .env
+    - optionally upsert GOOGLE_DRIVE_REFRESH_TOKEN in .env
+    - extract and optionally upsert GOOGLE_OAUTH_CLIENT_ID / GOOGLE_OAUTH_CLIENT_SECRET from client secret JSON
+
+Maps key script:
+    - obtain access token (gcloud or OAuth client secret fallback)
+    - optionally enable required services via Service Usage API
+    - create API key via API Keys API
+    - optionally apply API/application restrictions
+    - optionally upsert GOOGLE_MAPS_API_KEY in .env
+
+App key helper script:
+    - explains manual-only steps for GOOGLE_APP_KEY
 ```

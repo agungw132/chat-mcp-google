@@ -75,6 +75,7 @@ def get_servers_config() -> list[ServerConfig]:
         ServerConfig(name="calendar", script="calendar_server.py"),
         ServerConfig(name="contacts", script="contacts_server.py"),
         ServerConfig(name="drive", script="drive_server.py"),
+        ServerConfig(name="maps", script="maps_server.py"),
     ]
 
 

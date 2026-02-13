@@ -20,11 +20,13 @@ async def test_chat_empty_message():
     assert outputs == [[{"role": "user", "content": "x"}]]
 
 
-def test_get_servers_config_includes_drive():
+def test_get_servers_config_includes_drive_and_maps():
     names = [cfg.name for cfg in chat_service.get_servers_config()]
     scripts = [cfg.script for cfg in chat_service.get_servers_config()]
     assert "drive" in names
+    assert "maps" in names
     assert "drive_server.py" in scripts
+    assert "maps_server.py" in scripts
 
 
 def test_normalize_content_text_list_payload():

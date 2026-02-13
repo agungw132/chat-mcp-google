@@ -1,4 +1,5 @@
 import argparse
+import json
 from pathlib import Path
 
 
@@ -62,7 +63,38 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Do not auto-open browser for OAuth consent.",
     )
+    parser.add_argument(
+        "--no-write-refresh-token",
+        action="store_true",
+        help="Do not write GOOGLE_DRIVE_REFRESH_TOKEN to .env.",
+    )
+    parser.add_argument(
+        "--no-write-oauth-client",
+        action="store_true",
+        help="Do not write GOOGLE_OAUTH_CLIENT_ID/GOOGLE_OAUTH_CLIENT_SECRET to .env.",
+    )
     return parser.parse_args()
+
+
+def extract_oauth_client_credentials(client_secret_path: Path) -> tuple[str | None, str | None]:
+    try:
+        payload = json.loads(client_secret_path.read_text(encoding="utf-8"))
+    except Exception:
+        return None, None
+
+    client_obj = None
+    if isinstance(payload, dict):
+        if isinstance(payload.get("installed"), dict):
+            client_obj = payload["installed"]
+        elif isinstance(payload.get("web"), dict):
+            client_obj = payload["web"]
+
+    if not isinstance(client_obj, dict):
+        return None, None
+
+    client_id = str(client_obj.get("client_id", "")).strip() or None
+    client_secret = str(client_obj.get("client_secret", "")).strip() or None
+    return client_id, client_secret
 
 
 def main() -> int:
@@ -93,12 +125,19 @@ def main() -> int:
             seen.add(scope)
 
     flow = InstalledAppFlow.from_client_secrets_file(str(client_secret_path), scopes)
-    creds = flow.run_local_server(port=0, open_browser=not args.no_browser)
+    creds = flow.run_local_server(
+        port=0,
+        open_browser=not args.no_browser,
+        access_type="offline",
+        prompt="consent",
+    )
 
     token = creds.token
     if not token:
         print("Error: access token not returned.")
         return 1
+
+    client_id, client_secret = extract_oauth_client_credentials(client_secret_path)
 
     print("GOOGLE_DRIVE_ACCESS_TOKEN acquired.")
     print(f"Expires at: {creds.expiry}")
@@ -108,13 +147,29 @@ def main() -> int:
     if not args.no_write_env:
         env_path = Path(args.env_file)
         upsert_env_var(env_path, "GOOGLE_DRIVE_ACCESS_TOKEN", token)
+        if creds.refresh_token and not args.no_write_refresh_token:
+            upsert_env_var(env_path, "GOOGLE_DRIVE_REFRESH_TOKEN", creds.refresh_token)
+        if not args.no_write_oauth_client and client_id and client_secret:
+            upsert_env_var(env_path, "GOOGLE_OAUTH_CLIENT_ID", client_id)
+            upsert_env_var(env_path, "GOOGLE_OAUTH_CLIENT_SECRET", client_secret)
         print("")
         print(f"Updated {env_path} with GOOGLE_DRIVE_ACCESS_TOKEN.")
+        if creds.refresh_token and not args.no_write_refresh_token:
+            print(f"Updated {env_path} with GOOGLE_DRIVE_REFRESH_TOKEN.")
+        if not args.no_write_oauth_client and client_id and client_secret:
+            print(f"Updated {env_path} with GOOGLE_OAUTH_CLIENT_ID/GOOGLE_OAUTH_CLIENT_SECRET.")
 
     if creds.refresh_token:
         print("")
         print("Note: refresh token was also returned.")
-        print("This project currently uses access token only (no auto refresh flow).")
+        if args.no_write_refresh_token:
+            print("You can store it manually as GOOGLE_DRIVE_REFRESH_TOKEN for auto refresh flow.")
+        else:
+            print("It has been stored as GOOGLE_DRIVE_REFRESH_TOKEN for auto refresh flow.")
+    else:
+        print("")
+        print("Note: refresh token was not returned.")
+        print("If you need auto refresh flow, revoke prior consent and run again with prompt consent.")
 
     return 0
 

@@ -17,6 +17,7 @@ def _default_env(monkeypatch, request):
     monkeypatch.setenv("GOOGLE_ACCOUNT", "tester@example.com")
     monkeypatch.setenv("GOOGLE_APP_KEY", "app-password")
     monkeypatch.setenv("GOOGLE_DRIVE_ACCESS_TOKEN", "drive-test-token")
+    monkeypatch.setenv("GOOGLE_MAPS_API_KEY", "maps-test-key")
     monkeypatch.setenv("GOOGLE_GEMINI_API_KEY", "gemini-test-key")
     monkeypatch.setenv("BASE_URL", "https://api.example.com")
     monkeypatch.setenv("API_KEY", "openai-test-key")

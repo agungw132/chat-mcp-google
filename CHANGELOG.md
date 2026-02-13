@@ -7,6 +7,33 @@ All notable changes to this project will be documented in this file.
 ### Added
 - None yet.
 
+## [1.1.2] - 2026-02-14
+
+### Added
+- Added Google Maps MCP server with tools:
+  - `search_places_text`
+  - `geocode_address`
+  - `reverse_geocode`
+  - `get_place_details`
+  - `get_directions`
+- Added root wrapper entrypoint: `maps_server.py`.
+- Added Maps unit and smoke tests.
+- Added programmatic helper script: `get_google_maps_api_key.py`.
+- Added Drive token helper enhancements to store:
+  - `GOOGLE_DRIVE_REFRESH_TOKEN`
+  - `GOOGLE_OAUTH_CLIENT_ID`
+  - `GOOGLE_OAUTH_CLIENT_SECRET`
+
+### Changed
+- Integrated Maps MCP into chat server registry and validation model.
+- Updated UI caption and README to include Maps support.
+- Added `GOOGLE_MAPS_API_KEY` to `.env.template`.
+- Added setup guide for obtaining `GOOGLE_MAPS_API_KEY` and required Maps APIs.
+- Improved `get_google_maps_api_key.py` token flow with OAuth client-secret fallback when `gcloud` is unavailable.
+- Updated `docs/` pseudocode and time-complexity documents to include Maps MCP coverage.
+- Added Drive auto-refresh token flow in `drive_server.py` (with cache + refresh-token fallback behavior).
+- Updated `.env.template` and README with Drive refresh OAuth credential guidance.
+
 ## [1.1.1] - 2026-02-13
 
 ### Added

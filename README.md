@@ -7,11 +7,12 @@
 ![Validation: Pydantic](https://img.shields.io/badge/validation-Pydantic-E92063)
 ![Tests: pytest](https://img.shields.io/badge/tests-pytest-22c55e)
 
-A production-oriented Gradio chat application that integrates LLM tool-calling with four Google-focused MCP servers:
+A production-oriented Gradio chat application that integrates LLM tool-calling with five Google-focused MCP servers:
 - Gmail (IMAP/SMTP)
 - Google Calendar (CalDAV)
 - Google Contacts (CardDAV)
 - Google Drive (Drive REST API)
+- Google Maps (Maps/Places/Geocoding/Directions APIs)
 
 The application supports two model backends:
 - Direct Gemini models via `google-genai`
@@ -40,7 +41,7 @@ Current Gemini models:
 - Gradio chat interface with model selection.
 - Automatic MCP tool discovery and tool-calling.
 - Multi-round tool-call orchestration for OpenAI-compatible models (tool -> tool -> final answer).
-- Integrated Gmail, Calendar, Contacts, and Drive actions.
+- Integrated Gmail, Calendar, Contacts, Drive, and Maps actions.
 - Auto-invite flow: when prompt includes `invite` + email and event is created, app sends invitation via Gmail MCP.
 - Calendar invitation delivery supports `.ics` (`text/calendar`) accept/reject flow.
 - Drive phase 1.1 includes folder creation, text upload, move, user sharing, and public link creation.
@@ -84,11 +85,13 @@ flowchart TD
     TOOL --> MC[calendar_server.py]
     TOOL --> MT[contacts_server.py]
     TOOL --> MD[drive_server.py]
+    TOOL --> MM[maps_server.py]
 
     MG --> GI[Gmail IMAP/SMTP]
     MC --> GC[Google Calendar CalDAV]
     MT --> GCT[Google Contacts CardDAV]
     MD --> GD[Google Drive REST API]
+    MM --> GM[Google Maps APIs]
 
     TOOL --> LLM
     RESP --> UI
@@ -104,6 +107,7 @@ flowchart TD
 - `calendar_server.py`: Calendar MCP wrapper entrypoint.
 - `contacts_server.py`: Contacts MCP wrapper entrypoint.
 - `drive_server.py`: Drive MCP wrapper entrypoint.
+- `maps_server.py`: Maps MCP wrapper entrypoint.
 - `src/chat_google/chat_service.py`: main orchestration logic.
 - `src/chat_google/ui.py`: Gradio UI composition and event wiring.
 - `src/chat_google/constants.py`: model list and default model resolver.
@@ -123,6 +127,10 @@ flowchart TD
   - 2-Step Verification enabled
   - App Password enabled and generated
 - Google Cloud project with Drive API enabled (for `GOOGLE_DRIVE_ACCESS_TOKEN`)
+- OAuth client credentials (`Desktop app`) for Drive auto-refresh flow
+  - `GOOGLE_OAUTH_CLIENT_ID`
+  - `GOOGLE_OAUTH_CLIENT_SECRET`
+- Google Cloud project with Maps APIs enabled (for `GOOGLE_MAPS_API_KEY`)
 
 ## Configuration
 
@@ -138,6 +146,10 @@ Then edit `.env`:
 GOOGLE_ACCOUNT=you@example.com
 GOOGLE_APP_KEY=xxxxxxxxxxxxxxxx
 GOOGLE_DRIVE_ACCESS_TOKEN=your-drive-access-token
+GOOGLE_DRIVE_REFRESH_TOKEN=your-drive-refresh-token
+GOOGLE_OAUTH_CLIENT_ID=your-oauth-client-id.apps.googleusercontent.com
+GOOGLE_OAUTH_CLIENT_SECRET=your-oauth-client-secret
+GOOGLE_MAPS_API_KEY=your-google-maps-api-key
 GOOGLE_GEMINI_API_KEY=your_gemini_key
 BASE_URL=https://ai.sumopod.com
 API_KEY=your_api_key
@@ -148,6 +160,10 @@ Variable reference:
 - `GOOGLE_ACCOUNT`: Google account used by Gmail/Calendar/Contacts MCP servers.
 - `GOOGLE_APP_KEY`: Google App Password (16 characters, no spaces).
 - `GOOGLE_DRIVE_ACCESS_TOKEN`: OAuth 2.0 Bearer token for Drive MCP (not App Password).
+- `GOOGLE_DRIVE_REFRESH_TOKEN`: optional refresh token for automatic Drive token renewal.
+- `GOOGLE_OAUTH_CLIENT_ID`: OAuth client ID paired with `GOOGLE_DRIVE_REFRESH_TOKEN`.
+- `GOOGLE_OAUTH_CLIENT_SECRET`: OAuth client secret paired with `GOOGLE_DRIVE_REFRESH_TOKEN`.
+- `GOOGLE_MAPS_API_KEY`: Google Maps API key for Maps MCP tools.
 - `GOOGLE_GEMINI_API_KEY`: required for models that start with `gemini`.
 - `BASE_URL`: OpenAI-compatible API base URL for non-Gemini models.
 - `API_KEY`: bearer token for `BASE_URL`.
@@ -181,8 +197,11 @@ Important notes:
 
 Important notes:
 - This token is an OAuth Bearer token, not App Password.
-- Access token is short-lived (commonly around 1 hour). When expired, generate a new one.
-- This MCP phase intentionally uses access token only (no auto refresh flow).
+- Access token is short-lived (commonly around 1 hour). If you do not use refresh flow, regenerate it when expired.
+- For long-lived usage, set refresh flow variables:
+  - `GOOGLE_DRIVE_REFRESH_TOKEN`
+  - `GOOGLE_OAUTH_CLIENT_ID`
+  - `GOOGLE_OAUTH_CLIENT_SECRET`
 
 Programmatic helper script (root):
 
@@ -190,8 +209,103 @@ Programmatic helper script (root):
 uv run --with google-auth-oauthlib python get_google_drive_access_token.py --client-secret client_secret.json
 ```
 
+By default this script now writes to `.env`:
+- `GOOGLE_DRIVE_ACCESS_TOKEN`
+- `GOOGLE_DRIVE_REFRESH_TOKEN` (if returned by Google)
+- `GOOGLE_OAUTH_CLIENT_ID`
+- `GOOGLE_OAUTH_CLIENT_SECRET`
+
+Optional flags:
+
+```powershell
+# only write access token
+uv run --with google-auth-oauthlib python get_google_drive_access_token.py --client-secret client_secret.json --no-write-refresh-token --no-write-oauth-client
+
+# print token only (do not modify .env)
+uv run --with google-auth-oauthlib python get_google_drive_access_token.py --client-secret client_secret.json --no-write-env
+```
+
 Default scope in this script is full Drive access:
 - `https://www.googleapis.com/auth/drive`
+
+## How to Get `GOOGLE_OAUTH_CLIENT_ID` and `GOOGLE_OAUTH_CLIENT_SECRET`
+
+1. Open Google Cloud Console: `https://console.cloud.google.com/`.
+2. Select your project.
+3. Go to `APIs & Services` -> `Credentials`.
+4. Create OAuth client credentials (`Desktop app`) if not created yet.
+5. Download the client secret JSON file.
+6. Read from the JSON:
+   - `installed.client_id` -> `GOOGLE_OAUTH_CLIENT_ID`
+   - `installed.client_secret` -> `GOOGLE_OAUTH_CLIENT_SECRET`
+
+You can avoid manual copy by running:
+
+```powershell
+uv run --with google-auth-oauthlib python get_google_drive_access_token.py --client-secret client_secret.json
+```
+
+It extracts and writes both values automatically (unless disabled by flags).
+
+## How to Get `GOOGLE_MAPS_API_KEY` and Required APIs
+
+1. Open Google Cloud Console: `https://console.cloud.google.com/`.
+2. Create/select a project for this app.
+3. Enable billing for the project (Google Maps Platform requires an active billing account).
+4. Go to `APIs & Services` -> `Library`, then enable these APIs:
+   - `Geocoding API`
+   - `Directions API`
+   - `Places API` (used for text search and place details)
+5. Go to `APIs & Services` -> `Credentials` -> `Create Credentials` -> `API key`.
+6. Copy the key into `.env` as:
+   - `GOOGLE_MAPS_API_KEY=your-google-maps-api-key`
+
+Recommended key restrictions:
+- Application restrictions:
+  - For local/server use, prefer `IP addresses` and allow only your server IP.
+- API restrictions:
+  - Restrict key to:
+    - `Geocoding API`
+    - `Directions API`
+    - `Places API`
+
+Validation checklist:
+- `GOOGLE_MAPS_API_KEY` exists in `.env`.
+- The 3 APIs above are enabled in the same project as the key.
+- Billing is active on that project.
+
+Programmatic helper script (root):
+
+```powershell
+# One-time auth for script token discovery
+gcloud auth login
+gcloud auth application-default login
+
+# Create restricted key, enable required APIs, and write GOOGLE_MAPS_API_KEY to .env
+uv run python get_google_maps_api_key.py --project YOUR_PROJECT_ID
+```
+
+If `gcloud` is not installed, use OAuth client secret fallback:
+
+```powershell
+uv run --with google-auth-oauthlib python get_google_maps_api_key.py --project YOUR_PROJECT_ID --client-secret client_secret.json
+```
+
+Optional examples:
+
+```powershell
+# Create key without automatic API restrictions
+uv run python get_google_maps_api_key.py --project YOUR_PROJECT_ID --no-api-restrictions
+
+# Restrict key to server IP(s)
+uv run python get_google_maps_api_key.py --project YOUR_PROJECT_ID --allowed-ip 203.0.113.10
+
+# Do not modify .env (print key only)
+uv run python get_google_maps_api_key.py --project YOUR_PROJECT_ID --no-write-env
+```
+
+Shell note:
+- Use the full flag in one token: `--no-api-restrictions` (not split across lines like `--no-api-` then `restrictions`).
 
 ## Recommended uv Workflow
 
@@ -221,6 +335,7 @@ uv run python gmail_server.py
 uv run python calendar_server.py
 uv run python contacts_server.py
 uv run python drive_server.py
+uv run python maps_server.py
 ```
 
 ## MCP Tools
@@ -263,6 +378,13 @@ Note:
 - `create_drive_shared_link_to_user(item_id, user_email, role='reader', send_notification=True, message='', expires_in_days=7)`
 - `create_drive_public_link(item_id, role='reader', allow_discovery=False)` (file/folder)
 
+### Maps
+- `search_places_text(query, limit=5, language='en', region=None)`
+- `geocode_address(address, limit=3, language='en', region=None)`
+- `reverse_geocode(latitude, longitude, limit=3, language='en')`
+- `get_place_details(place_id, language='en')`
+- `get_directions(origin, destination, mode='driving', alternatives=False, language='en', units='metric', departure_time=None)`
+
 ## Testing
 
 Run the full test suite with `uv`:
@@ -276,6 +398,7 @@ Coverage includes:
 - All Calendar tools
 - All Contacts tools
 - All Drive phase-1 and phase-1.1 tools
+- All Maps tools
 - Core chat orchestration paths (Gemini, OpenAI-compatible, streaming, tool-calls, payload normalization)
 - Default model resolution behavior
 
@@ -336,6 +459,10 @@ Notes:
 
 7. Drive tools fail with 401/403
 - Check `GOOGLE_DRIVE_ACCESS_TOKEN` is set and not expired.
+- Prefer configuring refresh flow to avoid manual token renewal:
+  - `GOOGLE_DRIVE_REFRESH_TOKEN`
+  - `GOOGLE_OAUTH_CLIENT_ID`
+  - `GOOGLE_OAUTH_CLIENT_SECRET`
 - Ensure Drive API is enabled in your Google Cloud project.
 - Ensure OAuth scope includes `https://www.googleapis.com/auth/drive` (default script scope).
 - Remember: `GOOGLE_APP_KEY` cannot be used for Drive API.

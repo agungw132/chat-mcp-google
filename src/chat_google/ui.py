@@ -6,7 +6,7 @@ from chat_google.constants import AVAILABLE_MODELS, DEFAULT_MODEL
 
 def build_demo() -> gr.Blocks:
     with gr.Blocks(title="Sumopod AI Chat") as demo:
-        gr.Markdown("# Sumopod AI Chat (Gmail, Calendar, Contacts, Drive)")
+        gr.Markdown("# Sumopod AI Chat (Gmail, Calendar, Contacts, Drive, Maps)")
 
         chatbot = gr.Chatbot()
 

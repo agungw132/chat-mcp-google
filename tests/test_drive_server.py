@@ -235,8 +235,78 @@ async def test_drive_validation_error_limit():
 
 def test_get_access_token_missing(monkeypatch):
     monkeypatch.delenv("GOOGLE_DRIVE_ACCESS_TOKEN", raising=False)
+    monkeypatch.delenv("GOOGLE_DRIVE_REFRESH_TOKEN", raising=False)
+    monkeypatch.delenv("GOOGLE_OAUTH_CLIENT_ID", raising=False)
+    monkeypatch.delenv("GOOGLE_OAUTH_CLIENT_SECRET", raising=False)
+    drive_server._CACHED_ACCESS_TOKEN = None
+    drive_server._CACHED_ACCESS_TOKEN_EXPIRES_AT = None
     with pytest.raises(ValueError):
         drive_server._get_access_token()
+
+
+def test_get_access_token_static_token(monkeypatch):
+    monkeypatch.setenv("GOOGLE_DRIVE_ACCESS_TOKEN", "static-token")
+    monkeypatch.delenv("GOOGLE_DRIVE_REFRESH_TOKEN", raising=False)
+    monkeypatch.delenv("GOOGLE_OAUTH_CLIENT_ID", raising=False)
+    monkeypatch.delenv("GOOGLE_OAUTH_CLIENT_SECRET", raising=False)
+    drive_server._CACHED_ACCESS_TOKEN = None
+    drive_server._CACHED_ACCESS_TOKEN_EXPIRES_AT = None
+    assert drive_server._get_access_token() == "static-token"
+
+
+def test_get_access_token_refresh_success_and_cache(monkeypatch):
+    calls = {"count": 0}
+
+    def fake_refresh_access_token(refresh_token, client_id, client_secret):
+        calls["count"] += 1
+        assert refresh_token == "refresh-1"
+        assert client_id == "client-id-1"
+        assert client_secret == "client-secret-1"
+        return "fresh-token-1", 3600
+
+    monkeypatch.setenv("GOOGLE_DRIVE_REFRESH_TOKEN", "refresh-1")
+    monkeypatch.setenv("GOOGLE_OAUTH_CLIENT_ID", "client-id-1")
+    monkeypatch.setenv("GOOGLE_OAUTH_CLIENT_SECRET", "client-secret-1")
+    monkeypatch.setenv("GOOGLE_DRIVE_ACCESS_TOKEN", "old-token")
+    monkeypatch.setattr(drive_server, "_refresh_access_token", fake_refresh_access_token)
+    drive_server._CACHED_ACCESS_TOKEN = None
+    drive_server._CACHED_ACCESS_TOKEN_EXPIRES_AT = None
+
+    token_1 = drive_server._get_access_token()
+    token_2 = drive_server._get_access_token()
+
+    assert token_1 == "fresh-token-1"
+    assert token_2 == "fresh-token-1"
+    assert calls["count"] == 1
+
+
+def test_get_access_token_refresh_failure_falls_back_to_static(monkeypatch):
+    def fake_refresh_access_token(refresh_token, client_id, client_secret):
+        raise ValueError("invalid_grant")
+
+    monkeypatch.setenv("GOOGLE_DRIVE_REFRESH_TOKEN", "refresh-1")
+    monkeypatch.setenv("GOOGLE_OAUTH_CLIENT_ID", "client-id-1")
+    monkeypatch.setenv("GOOGLE_OAUTH_CLIENT_SECRET", "client-secret-1")
+    monkeypatch.setenv("GOOGLE_DRIVE_ACCESS_TOKEN", "static-fallback-token")
+    monkeypatch.setattr(drive_server, "_refresh_access_token", fake_refresh_access_token)
+    drive_server._CACHED_ACCESS_TOKEN = None
+    drive_server._CACHED_ACCESS_TOKEN_EXPIRES_AT = None
+
+    assert drive_server._get_access_token() == "static-fallback-token"
+
+
+def test_get_access_token_incomplete_refresh_config(monkeypatch):
+    monkeypatch.delenv("GOOGLE_DRIVE_ACCESS_TOKEN", raising=False)
+    monkeypatch.setenv("GOOGLE_DRIVE_REFRESH_TOKEN", "refresh-1")
+    monkeypatch.setenv("GOOGLE_OAUTH_CLIENT_ID", "client-id-1")
+    monkeypatch.delenv("GOOGLE_OAUTH_CLIENT_SECRET", raising=False)
+    drive_server._CACHED_ACCESS_TOKEN = None
+    drive_server._CACHED_ACCESS_TOKEN_EXPIRES_AT = None
+
+    with pytest.raises(ValueError) as exc_info:
+        drive_server._get_access_token()
+    assert "Incomplete Drive OAuth refresh configuration" in str(exc_info.value)
+    assert "GOOGLE_OAUTH_CLIENT_SECRET" in str(exc_info.value)
 
 
 @pytest.mark.asyncio
