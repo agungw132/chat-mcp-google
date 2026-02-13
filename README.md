@@ -27,6 +27,26 @@ Alur `chat_service`:
 4. Saat model meminta tool, jalankan tool MCP terkait.
 5. Kirim hasil tool kembali ke model hingga jawaban final.
 
+```mermaid
+flowchart LR
+    U[User] --> UI[Gradio UI\nsrc/chat_google/ui.py]
+    UI --> CS[Chat Service\nsrc/chat_google/chat_service.py]
+
+    CS -->|gemini*| G[Gemini API]
+    CS -->|non-gemini| O[OpenAI-compatible API\nBASE_URL/v1/chat/completions]
+
+    CS <-->|stdio MCP| MG[gmail_server.py]
+    CS <-->|stdio MCP| MC[calendar_server.py]
+    CS <-->|stdio MCP| MT[contacts_server.py]
+
+    MG --> GI[Gmail IMAP/SMTP]
+    MC --> GC[Google Calendar CalDAV]
+    MT --> GCT[Google Contacts CardDAV]
+
+    CS --> L[chat_app.log]
+    CS --> M[metrics.jsonl]
+```
+
 ## Struktur Repo (Refactor)
 
 - `app.py`: entrypoint UI (wrapper, backward-compatible).
