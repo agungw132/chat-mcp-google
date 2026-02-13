@@ -83,6 +83,10 @@ async def test_list_contacts(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_search_contacts(monkeypatch):
+    async def fake_search_links(query):
+        assert query == "alice"
+        return ["https://api.test/1.vcf", "https://api.test/2.vcf"], None
+
     async def fake_fetch_links():
         return ["https://api.test/1.vcf", "https://api.test/2.vcf"], None
 
@@ -111,6 +115,7 @@ async def test_search_contacts(monkeypatch):
             tel=SimpleNamespace(value="+62999"),
         )
 
+    monkeypatch.setattr(contacts_server, "_search_vcf_links", fake_search_links)
     monkeypatch.setattr(contacts_server, "_fetch_vcf_links", fake_fetch_links)
     monkeypatch.setattr(contacts_server.httpx, "AsyncClient", lambda **kwargs: FakeClient())
     monkeypatch.setattr(contacts_server.vobject, "readOne", fake_read_one)
@@ -122,6 +127,9 @@ async def test_search_contacts(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_search_contacts_no_match(monkeypatch):
+    async def fake_search_links(query):
+        return ["https://api.test/1.vcf"], None
+
     async def fake_fetch_links():
         return ["https://api.test/1.vcf"], None
 
@@ -142,6 +150,7 @@ async def test_search_contacts_no_match(monkeypatch):
             tel=SimpleNamespace(value="+62000"),
         )
 
+    monkeypatch.setattr(contacts_server, "_search_vcf_links", fake_search_links)
     monkeypatch.setattr(contacts_server, "_fetch_vcf_links", fake_fetch_links)
     monkeypatch.setattr(contacts_server.httpx, "AsyncClient", lambda **kwargs: FakeClient())
     monkeypatch.setattr(contacts_server.vobject, "readOne", fake_read_one)
@@ -154,3 +163,70 @@ async def test_search_contacts_invalid_query():
     result = await contacts_server.search_contacts("   ")
     assert result.startswith("Error:")
     assert "String should have at least 1 character" in result
+
+
+@pytest.mark.asyncio
+async def test_search_contacts_fallback_when_report_fails(monkeypatch):
+    async def fake_search_links(query):
+        return None, "Search failed: 500"
+
+    async def fake_fetch_links():
+        return ["https://api.test/1.vcf"], None
+
+    class FakeClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def get(self, link, auth=None):
+            return _Response(status_code=200, text="ALICE")
+
+    def fake_read_one(text):
+        return SimpleNamespace(
+            fn=SimpleNamespace(value="Alice"),
+            email=SimpleNamespace(value="alice@example.com"),
+            tel=SimpleNamespace(value="+62000"),
+        )
+
+    monkeypatch.setattr(contacts_server, "_search_vcf_links", fake_search_links)
+    monkeypatch.setattr(contacts_server, "_fetch_vcf_links", fake_fetch_links)
+    monkeypatch.setattr(contacts_server.httpx, "AsyncClient", lambda **kwargs: FakeClient())
+    monkeypatch.setattr(contacts_server.vobject, "readOne", fake_read_one)
+    result = await contacts_server.search_contacts("alice")
+    assert "Search Results" in result
+    assert "Alice" in result
+
+
+@pytest.mark.asyncio
+async def test_fetch_vcf_links_uses_http11_when_h2_missing(monkeypatch):
+    captured = {}
+    sample_xml = """<?xml version="1.0"?>
+    <d:multistatus xmlns:d="DAV:">
+      <d:response>
+        <d:href>/carddav/v1/principals/tester@example.com/lists/default/1.vcf</d:href>
+      </d:response>
+    </d:multistatus>"""
+
+    class FakeClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def request(self, method, url, content, headers, auth):
+            return _Response(status_code=207, text=sample_xml)
+
+    def fake_async_client(**kwargs):
+        captured.update(kwargs)
+        return FakeClient()
+
+    monkeypatch.setattr(contacts_server, "HTTP2_ENABLED", False)
+    monkeypatch.setattr(contacts_server.httpx, "AsyncClient", fake_async_client)
+
+    links, err = await contacts_server._fetch_vcf_links()
+    assert err is None
+    assert links and len(links) == 1
+    assert captured.get("http2") is False

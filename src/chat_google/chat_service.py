@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import contextlib
 import json
 import logging
@@ -6,16 +8,22 @@ import time
 from datetime import datetime
 from typing import Any
 
-import google.generativeai as genai
 import httpx
 from dotenv import load_dotenv
-from google.ai.generativelanguage_v1beta.types import content
-from google.api_core import exceptions as google_exceptions
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
 from chat_google.constants import OPENAI_SYSTEM_INSTRUCTION, SYSTEM_INSTRUCTION
 from chat_google.models import ChatMessage, MetricsRecord, RuntimeSettings, ServerConfig
+
+try:
+    import google.genai as genai
+    from google.genai import errors as genai_errors
+    from google.genai import types as genai_types
+except Exception as genai_import_error:  # pragma: no cover - environment specific
+    genai = None
+    genai_errors = None
+    genai_types = None
 
 
 def _build_logger() -> logging.Logger:
@@ -113,6 +121,60 @@ def normalize_content_text(value: Any) -> str:
     return str(value)
 
 
+def _summarize_for_log(value: Any, limit: int = 200) -> str:
+    text = normalize_content_text(value).replace("\n", " ").strip()
+    if len(text) <= limit:
+        return text
+    return text[: limit - 3] + "..."
+
+
+def _looks_like_error_text(text: str) -> bool:
+    lowered = text.strip().lower()
+    return lowered.startswith("error:") or lowered.startswith("search failed:") or lowered.startswith(
+        "fetch failed:"
+    )
+
+
+def _history_role_to_gemini_role(role: str) -> str:
+    if role == "assistant":
+        return "model"
+    return role
+
+
+def _make_gemini_content(role: str, text: str) -> genai_types.Content:
+    return genai_types.Content(
+        role=_history_role_to_gemini_role(role),
+        parts=[genai_types.Part.from_text(text=text)],
+    )
+
+
+def _to_plain_dict(value: Any) -> dict:
+    if isinstance(value, dict):
+        return value
+    if value is None:
+        return {}
+    try:
+        return dict(value)
+    except Exception:
+        return {}
+
+
+def _extract_gemini_text(response) -> str:
+    if getattr(response, "text", None):
+        return response.text
+
+    candidates = getattr(response, "candidates", None) or []
+    text_parts = []
+    for candidate in candidates:
+        content_obj = getattr(candidate, "content", None)
+        parts = getattr(content_obj, "parts", None) or []
+        for part in parts:
+            text = getattr(part, "text", None)
+            if text:
+                text_parts.append(text)
+    return "".join(text_parts)
+
+
 def log_metrics(metrics_data: dict, file_path: str = "metrics.jsonl") -> None:
     try:
         metrics_record = MetricsRecord.model_validate(metrics_data)
@@ -139,7 +201,7 @@ async def _collect_mcp_tools(stack, servers_config):
     tool_to_session = {}
     tool_to_server_name = {}
     mcp_tools = []
-    gemini_tools = []
+    gemini_function_declarations = []
 
     for cfg in servers_config:
         try:
@@ -164,17 +226,20 @@ async def _collect_mcp_tools(stack, servers_config):
                         },
                     }
                 )
-                gemini_tools.append(
-                    {
-                        "name": tool.name,
-                        "description": tool.description,
-                        "parameters": sanitize_schema_for_gemini(tool.inputSchema),
-                    }
-                )
+                if genai_types is not None:
+                    gemini_function_declarations.append(
+                        genai_types.FunctionDeclaration(
+                            name=tool.name,
+                            description=tool.description,
+                            parameters_json_schema=sanitize_schema_for_gemini(
+                                tool.inputSchema
+                            ),
+                        )
+                    )
         except Exception as exc:
             logger.error("Failed to start MCP server %s: %s", cfg.name, exc)
 
-    return tool_to_session, tool_to_server_name, mcp_tools, gemini_tools
+    return tool_to_session, tool_to_server_name, mcp_tools, gemini_function_declarations
 
 
 async def chat(message, history, model_name):
@@ -194,6 +259,8 @@ async def chat(message, history, model_name):
     invoked_tools = []
     invoked_servers = set()
     status = "success"
+    error_message = None
+    tool_errors = []
 
     logger.info("--- New Chat Request [%s] ---", request_id)
 
@@ -209,96 +276,177 @@ async def chat(message, history, model_name):
                 tool_to_session,
                 tool_to_server_name,
                 mcp_tools,
-                gemini_tools,
+                gemini_function_declarations,
             ) = await _collect_mcp_tools(stack, servers_config)
             full_response = ""
 
             if model_name.startswith("gemini"):
+                if genai is None or genai_types is None:
+                    status = "error_missing_gemini_sdk"
+                    full_response = (
+                        "Error: google-genai is not installed correctly. "
+                        "Run `uv sync` or install `google-genai`."
+                    )
+                    error_message = full_response
+                    current_history[-1]["content"] = full_response
+                    yield current_history
+                    return
+
                 if not google_gemini_api_key:
                     status = "error_missing_gemini_key"
                     full_response = "Error: GOOGLE_GEMINI_API_KEY not found in .env"
+                    error_message = full_response
                     current_history[-1]["content"] = full_response
                     yield current_history
                     return
 
-                genai.configure(api_key=google_gemini_api_key)
-                model = genai.GenerativeModel(
-                    model_name,
-                    tools=[{"function_declarations": gemini_tools}] if gemini_tools else None,
-                    system_instruction=SYSTEM_INSTRUCTION,
+                gemini_tool_config = (
+                    [genai_types.Tool(function_declarations=gemini_function_declarations)]
+                    if gemini_function_declarations
+                    else None
                 )
-                chat_session = model.start_chat(history=[])
+                gemini_config = genai_types.GenerateContentConfig(
+                    system_instruction=SYSTEM_INSTRUCTION,
+                    tools=gemini_tool_config,
+                )
 
+                gemini_contents = []
                 for history_item in validated_history:
-                    role = "user" if history_item["role"] == "user" else "model"
-                    chat_session.history.append(
-                        content.Content(
-                            role=role,
-                            parts=[content.Part(text=history_item["content"])],
+                    gemini_contents.append(
+                        _make_gemini_content(
+                            role=history_item["role"],
+                            text=history_item["content"],
                         )
                     )
+                gemini_contents.append(_make_gemini_content("user", normalized_message))
 
                 try:
-                    response = await chat_session.send_message_async(normalized_message)
-                except google_exceptions.ResourceExhausted:
-                    status = "error_gemini_quota_exhausted"
-                    full_response = "Error: Your Gemini API quota is exhausted."
+                    async with genai.Client(api_key=google_gemini_api_key).aio as aclient:
+                        while True:
+                            response = await aclient.models.generate_content(
+                                model=model_name,
+                                contents=gemini_contents,
+                                config=gemini_config,
+                            )
+
+                            function_calls = getattr(response, "function_calls", None) or []
+                            if not function_calls:
+                                full_response = _extract_gemini_text(response)
+                                current_history[-1]["content"] = full_response
+                                yield current_history
+                                break
+
+                            candidates = getattr(response, "candidates", None) or []
+                            if candidates:
+                                model_content = getattr(candidates[0], "content", None)
+                                if model_content is not None:
+                                    gemini_contents.append(model_content)
+
+                            tool_response_parts = []
+                            for function_call in function_calls:
+                                tool_name = function_call.name
+                                tool_args = _to_plain_dict(getattr(function_call, "args", {}))
+                                invoked_tools.append(tool_name)
+                                server_name = tool_to_server_name.get(tool_name, "unknown")
+                                invoked_servers.add(
+                                    server_name
+                                )
+                                logger.info(
+                                    "[%s] Invoking tool=%s server=%s args=%s",
+                                    request_id,
+                                    tool_name,
+                                    server_name,
+                                    _summarize_for_log(tool_args),
+                                )
+
+                                session = tool_to_session.get(tool_name)
+                                if not session:
+                                    status = "error_tool_session_not_found"
+                                    full_response = (
+                                        f"Error: Tool '{tool_name}' is not available from MCP session."
+                                    )
+                                    error_message = full_response
+                                    tool_errors.append(f"{tool_name}: session not found")
+                                    current_history[-1]["content"] = full_response
+                                    yield current_history
+                                    return
+
+                                tool_started_at = time.perf_counter()
+                                try:
+                                    result = await session.call_tool(tool_name, tool_args)
+                                    tool_content = _result_to_text(result)
+                                except Exception as tool_exc:
+                                    tool_content = (
+                                        f"Error: Tool '{tool_name}' failed with exception: {tool_exc}"
+                                    )
+                                    tool_error = f"{tool_name}: {tool_exc}"
+                                    tool_errors.append(tool_error)
+                                    status = "error_tool_execution"
+                                    error_message = tool_error
+                                    logger.error(
+                                        "[%s] Tool %s failed after %.3fs: %s",
+                                        request_id,
+                                        tool_name,
+                                        time.perf_counter() - tool_started_at,
+                                        tool_exc,
+                                        exc_info=True,
+                                    )
+                                else:
+                                    logger.info(
+                                        "[%s] Tool %s completed in %.3fs",
+                                        request_id,
+                                        tool_name,
+                                        time.perf_counter() - tool_started_at,
+                                    )
+                                if _looks_like_error_text(tool_content):
+                                    tool_error = f"{tool_name}: {tool_content}"
+                                    tool_errors.append(tool_error)
+                                    if error_message is None:
+                                        error_message = tool_error
+                                    logger.warning(
+                                        "[%s] Tool %s returned error content: %s",
+                                        request_id,
+                                        tool_name,
+                                        _summarize_for_log(tool_content),
+                                    )
+                                logger.debug(
+                                    "[%s] Tool %s output: %s",
+                                    request_id,
+                                    tool_name,
+                                    _summarize_for_log(tool_content, limit=300),
+                                )
+                                tool_response_parts.append(
+                                    genai_types.Part.from_function_response(
+                                        name=tool_name,
+                                        response={"result": tool_content},
+                                    )
+                                )
+
+                            gemini_contents.append(
+                                genai_types.Content(role="tool", parts=tool_response_parts)
+                            )
+                except Exception as exc:
+                    if (
+                        genai_errors is not None
+                        and isinstance(exc, genai_errors.APIError)
+                        and getattr(exc, "code", None) == 429
+                    ):
+                        status = "error_gemini_quota_exhausted"
+                        full_response = "Error: Your Gemini API quota is exhausted."
+                        error_message = full_response
+                    else:
+                        status = "error_gemini_api"
+                        code = getattr(exc, "code", "unknown")
+                        full_response = f"Error: Gemini API error ({code})."
+                        error_message = full_response
                     current_history[-1]["content"] = full_response
                     yield current_history
                     return
-
-                while True:
-                    if not response.parts:
-                        break
-
-                    function_call = None
-                    text_segments = []
-                    for part in response.parts:
-                        if getattr(part, "function_call", None) and function_call is None:
-                            function_call = part.function_call
-                        if getattr(part, "text", None):
-                            text_segments.append(part.text)
-
-                    if function_call:
-                        tool_name = function_call.name
-                        tool_args = dict(function_call.args)
-                        invoked_tools.append(tool_name)
-                        invoked_servers.add(tool_to_server_name.get(tool_name, "unknown"))
-
-                        session = tool_to_session.get(tool_name)
-                        if not session:
-                            status = "error_tool_session_not_found"
-                            full_response = (
-                                f"Error: Tool '{tool_name}' is not available from MCP session."
-                            )
-                            current_history[-1]["content"] = full_response
-                            yield current_history
-                            break
-
-                        result = await session.call_tool(tool_name, tool_args)
-                        tool_content = _result_to_text(result)
-                        response = await chat_session.send_message_async(
-                            content.Content(
-                                parts=[
-                                    content.Part(
-                                        function_response=content.FunctionResponse(
-                                            name=tool_name,
-                                            response={"result": tool_content},
-                                        )
-                                    )
-                                ]
-                            )
-                        )
-                        continue
-
-                    full_response += "".join(text_segments)
-                    current_history[-1]["content"] = full_response
-                    yield current_history
-                    break
             else:
                 if not api_key:
                     status = "error_missing_api_key"
                     full_response = "Error: API_KEY not found in .env"
+                    error_message = full_response
                     current_history[-1]["content"] = full_response
                     yield current_history
                     return
@@ -326,6 +474,7 @@ async def chat(message, history, model_name):
                     if first_response.status_code != 200:
                         status = "error_http_status"
                         full_response = f"Error: {first_response.status_code}"
+                        error_message = full_response
                         current_history[-1]["content"] = full_response
                         yield current_history
                         return
@@ -347,14 +496,69 @@ async def chat(message, history, model_name):
                                 tool_args = raw_args
 
                             invoked_tools.append(tool_name)
-                            invoked_servers.add(tool_to_server_name.get(tool_name, "unknown"))
+                            server_name = tool_to_server_name.get(tool_name, "unknown")
+                            invoked_servers.add(server_name)
+                            logger.info(
+                                "[%s] Invoking tool=%s server=%s args=%s",
+                                request_id,
+                                tool_name,
+                                server_name,
+                                _summarize_for_log(tool_args),
+                            )
 
                             session = tool_to_session.get(tool_name)
                             if not session:
+                                tool_error = f"{tool_name}: session not found"
+                                tool_errors.append(tool_error)
+                                if error_message is None:
+                                    error_message = tool_error
+                                logger.warning("[%s] %s", request_id, tool_error)
                                 continue
 
-                            result = await session.call_tool(tool_name, tool_args)
-                            tool_content = _result_to_text(result)
+                            tool_started_at = time.perf_counter()
+                            try:
+                                result = await session.call_tool(tool_name, tool_args)
+                                tool_content = _result_to_text(result)
+                            except Exception as tool_exc:
+                                tool_content = (
+                                    f"Error: Tool '{tool_name}' failed with exception: {tool_exc}"
+                                )
+                                tool_error = f"{tool_name}: {tool_exc}"
+                                tool_errors.append(tool_error)
+                                status = "error_tool_execution"
+                                error_message = tool_error
+                                logger.error(
+                                    "[%s] Tool %s failed after %.3fs: %s",
+                                    request_id,
+                                    tool_name,
+                                    time.perf_counter() - tool_started_at,
+                                    tool_exc,
+                                    exc_info=True,
+                                )
+                            else:
+                                logger.info(
+                                    "[%s] Tool %s completed in %.3fs",
+                                    request_id,
+                                    tool_name,
+                                    time.perf_counter() - tool_started_at,
+                                )
+                            if _looks_like_error_text(tool_content):
+                                tool_error = f"{tool_name}: {tool_content}"
+                                tool_errors.append(tool_error)
+                                if error_message is None:
+                                    error_message = tool_error
+                                logger.warning(
+                                    "[%s] Tool %s returned error content: %s",
+                                    request_id,
+                                    tool_name,
+                                    _summarize_for_log(tool_content),
+                                )
+                            logger.debug(
+                                "[%s] Tool %s output: %s",
+                                request_id,
+                                tool_name,
+                                _summarize_for_log(tool_content, limit=300),
+                            )
                             api_messages.append(
                                 {
                                     "role": "tool",
@@ -382,6 +586,7 @@ async def chat(message, history, model_name):
                             if final_resp.status_code != 200:
                                 status = "error_http_stream_status"
                                 full_response = f"Error: {final_resp.status_code}"
+                                error_message = full_response
                                 current_history[-1]["content"] = full_response
                                 yield current_history
                                 return
@@ -412,10 +617,15 @@ async def chat(message, history, model_name):
                         yield current_history
     except Exception as exc:  # pragma: no cover - defensive fallback
         status = "error_exception"
+        error_message = str(exc)
         logger.error("Chat Error: %s", exc, exc_info=True)
         current_history[-1]["content"] = f"Error: {str(exc)}"
         yield current_history
     finally:
+        if status == "success" and tool_errors:
+            status = "success_with_tool_errors"
+        if error_message is None and tool_errors:
+            error_message = "; ".join(tool_errors)
         duration = time.time() - start_time
         log_metrics(
             {
@@ -427,5 +637,7 @@ async def chat(message, history, model_name):
                 "invoked_tools": invoked_tools,
                 "invoked_servers": sorted(invoked_servers),
                 "status": status,
+                "error_message": error_message,
+                "tool_errors": tool_errors,
             }
         )

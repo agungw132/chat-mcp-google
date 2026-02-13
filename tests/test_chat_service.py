@@ -76,59 +76,43 @@ async def test_chat_gemini_tool_flow(monkeypatch):
             {"search_contacts": fake_session},
             {"search_contacts": "contacts"},
             [],
-            [{"name": "search_contacts", "description": "Search contacts", "parameters": {}}],
+            [],
         )
 
-    class FakeResponse:
-        def __init__(self, parts):
-            self.parts = parts
-
-    class FakeChatSession:
+    class FakeAioClient:
         def __init__(self):
-            self.history = []
-            self.step = 0
+            self._step = 0
+            self.models = self
 
-        async def send_message_async(self, payload):
-            self.step += 1
-            if self.step == 1:
-                fn = SimpleNamespace(name="search_contacts", args={"query": "Alice"})
-                return FakeResponse([SimpleNamespace(function_call=fn)])
-            return FakeResponse([SimpleNamespace(text="Jawaban final")])
+        async def __aenter__(self):
+            return self
 
-    class FakeModel:
-        def __init__(self, *args, **kwargs):
-            self.args = args
-            self.kwargs = kwargs
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
 
-        def start_chat(self, history=None):
-            return FakeChatSession()
+        async def generate_content(self, **kwargs):
+            self._step += 1
+            if self._step == 1:
+                return SimpleNamespace(
+                    function_calls=[SimpleNamespace(name="search_contacts", args={"query": "Alice"})],
+                    candidates=[SimpleNamespace(content=SimpleNamespace(parts=[]))],
+                    text=None,
+                )
+            return SimpleNamespace(function_calls=[], candidates=[], text="Final answer")
 
-    class FakeContentModule:
-        class Content:
-            def __init__(self, role=None, parts=None):
-                self.role = role
-                self.parts = parts or []
-
-        class Part:
-            def __init__(self, text=None, function_response=None):
-                self.text = text
-                self.function_response = function_response
-
-        class FunctionResponse:
-            def __init__(self, name, response):
-                self.name = name
-                self.response = response
+    class FakeClient:
+        def __init__(self, api_key):
+            self.api_key = api_key
+            self.aio = FakeAioClient()
 
     monkeypatch.setattr(chat_service, "_collect_mcp_tools", fake_collect)
-    monkeypatch.setattr(chat_service.genai, "configure", lambda **kwargs: None)
-    monkeypatch.setattr(chat_service.genai, "GenerativeModel", FakeModel)
-    monkeypatch.setattr(chat_service, "content", FakeContentModule)
+    monkeypatch.setattr(chat_service.genai, "Client", FakeClient)
 
     metrics = []
     monkeypatch.setattr(chat_service, "log_metrics", lambda data: metrics.append(data))
     outputs = await _collect_stream(chat_service.chat("Cari kontak Alice", [], "gemini-3-flash-preview"))
 
-    assert outputs[-1][-1]["content"] == "Jawaban final"
+    assert outputs[-1][-1]["content"] == "Final answer"
     assert fake_session.calls == [("search_contacts", {"query": "Alice"})]
     assert metrics and metrics[0]["invoked_tools"] == ["search_contacts"]
 
@@ -279,3 +263,81 @@ async def test_chat_metrics_accepts_list_message_payload(monkeypatch):
     outputs = await _collect_stream(chat_service.chat(payload, [], "deepseek-v3-2-251201"))
     assert outputs[-1][-1]["content"] == "Error: 500"
     assert metrics[0]["user_question"] == "ringkas email hari ini"
+
+
+@pytest.mark.asyncio
+async def test_chat_openai_tool_error_is_captured_in_metrics(monkeypatch):
+    class FakeResult:
+        def __init__(self):
+            self.content = [SimpleNamespace(text="Error: Search failed: 500")]
+
+    class FakeSession:
+        async def call_tool(self, name, args):
+            return FakeResult()
+
+    async def fake_collect(*args, **kwargs):
+        return (
+            {"search_contacts": FakeSession()},
+            {"search_contacts": "contacts"},
+            [{"type": "function", "function": {"name": "search_contacts"}}],
+            [],
+        )
+
+    class FirstResponse:
+        status_code = 200
+
+        def json(self):
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "tool_calls": [
+                                {
+                                    "id": "call_1",
+                                    "function": {
+                                        "name": "search_contacts",
+                                        "arguments": json.dumps({"query": "Alice"}),
+                                    },
+                                }
+                            ]
+                        }
+                    }
+                ]
+            }
+
+    class FakeStreamResponse:
+        status_code = 200
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def aiter_lines(self):
+            yield 'data: {"choices":[{"delta":{"content":"Done"}}]}'
+            yield "data: [DONE]"
+
+    class FakeClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def post(self, *args, **kwargs):
+            return FirstResponse()
+
+        def stream(self, *args, **kwargs):
+            return FakeStreamResponse()
+
+    monkeypatch.setattr(chat_service, "_collect_mcp_tools", fake_collect)
+    monkeypatch.setattr(chat_service.httpx, "AsyncClient", lambda: FakeClient())
+    metrics = []
+    monkeypatch.setattr(chat_service, "log_metrics", lambda data: metrics.append(data))
+
+    outputs = await _collect_stream(chat_service.chat("cari alice", [], "deepseek-v3-2-251201"))
+    assert outputs[-1][-1]["content"] == "Done"
+    assert metrics and metrics[0]["status"] == "success_with_tool_errors"
+    assert metrics[0]["tool_errors"]
+    assert "search_contacts" in metrics[0]["tool_errors"][0]

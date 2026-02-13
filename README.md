@@ -13,7 +13,7 @@ A production-oriented Gradio chat application that integrates LLM tool-calling w
 - Google Contacts (CardDAV)
 
 The application supports two model backends:
-- Direct Gemini models via `google-generativeai`
+- Direct Gemini models via `google-genai`
 - OpenAI-compatible models via `BASE_URL` and `API_KEY`
 
 ## Key Features
@@ -21,6 +21,7 @@ The application supports two model backends:
 - Gradio chat interface with model selection.
 - Automatic MCP tool discovery and tool-calling.
 - Integrated Gmail, Calendar, and Contacts actions.
+- Contacts search resilience: automatically falls back to HTTP/1.1 when `h2` is unavailable.
 - Request-level metrics in `metrics.jsonl`.
 - Runtime logs in `chat_app.log`.
 - Pydantic-based validation for app settings, payload normalization, and tool inputs.
@@ -204,8 +205,11 @@ Coverage includes:
 
 ## Observability
 
-- `chat_app.log`: runtime logs and error details.
-- `metrics.jsonl`: per-request telemetry (timestamp, model, duration, tool/server usage, status).
+- `chat_app.log`: runtime logs, tool invocation traces, tool duration, fallback behavior, and exception stack traces.
+- `metrics.jsonl`: per-request telemetry:
+  - Core fields: `timestamp`, `request_id`, `model`, `user_question`, `duration_seconds`, `invoked_tools`, `invoked_servers`, `status`
+  - Error fields: `error_message`, `tool_errors`
+  - `status` can include `success_with_tool_errors` when a response completes but one or more tools returned error content.
 
 ## Troubleshooting
 
@@ -226,6 +230,11 @@ Coverage includes:
 4. Non-Gemini requests fail
 - Verify `BASE_URL` and `API_KEY`.
 - Confirm your endpoint supports chat completions and tool-calling.
+
+5. Contact search says "technical issue"
+- The contacts server now auto-disables HTTP/2 when `h2` is missing, so it can still run via HTTP/1.1.
+- If Google CardDAV `REPORT` search returns `5xx`, the server automatically falls back to `PROPFIND` + local filtering.
+- Check `chat_app.log` for lines containing `search_contacts REPORT failed` and `fallback PROPFIND completed`.
 
 ## Security Notes
 

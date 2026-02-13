@@ -36,4 +36,5 @@ class MetricsRecord(BaseModel):
     invoked_tools: list[str]
     invoked_servers: list[str]
     status: str
-
+    error_message: str | None = None
+    tool_errors: list[str] = Field(default_factory=list)
