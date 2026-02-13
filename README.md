@@ -117,6 +117,7 @@ Keterangan:
 - `GOOGLE_ACCOUNT` + `GOOGLE_APP_KEY` dipakai oleh semua MCP server.
 - Model `gemini*` menggunakan `GOOGLE_GEMINI_API_KEY`.
 - Model non-Gemini menggunakan `BASE_URL` + `API_KEY`.
+- `MODEL` dipakai sebagai default awal model di dropdown UI (jika valid dan ada di daftar model tersedia).
 
 ## Menjalankan App
 
