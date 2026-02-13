@@ -2,8 +2,10 @@ import email
 import imaplib
 import os
 import smtplib
-from datetime import datetime, timedelta
+import uuid
+from datetime import datetime, timedelta, timezone
 from email.header import decode_header
+from email.message import EmailMessage
 from email.mime.text import MIMEText
 from typing import Literal
 
@@ -64,6 +66,19 @@ class _SendEmailInput(BaseModel):
     body: str = Field(default="")
 
 
+class _SendCalendarInviteInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    to_email: str = Field(min_length=3, pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+    subject: str = Field(min_length=1)
+    body: str = Field(default="")
+    summary: str = Field(min_length=1)
+    start_time: str = Field(min_length=1)
+    duration_minutes: int = Field(default=60, ge=1, le=1440, strict=True)
+    description: str = Field(default="")
+    location: str = Field(default="")
+
+
 def _get_credentials() -> tuple[str, str]:
     email_account = os.getenv("GOOGLE_ACCOUNT")
     app_password = os.getenv("GOOGLE_APP_KEY")
@@ -89,6 +104,54 @@ def _decode_str(value: str | None) -> str:
         else:
             decoded.append(part)
     return "".join(decoded)
+
+
+def _escape_ics_text(value: str) -> str:
+    return (
+        (value or "")
+        .replace("\\", "\\\\")
+        .replace("\n", "\\n")
+        .replace(",", "\\,")
+        .replace(";", "\\;")
+    )
+
+
+def _build_ics_invite(
+    organizer_email: str,
+    attendee_email: str,
+    summary: str,
+    start_time: str,
+    duration_minutes: int,
+    description: str = "",
+    location: str = "",
+) -> str:
+    start_dt = datetime.strptime(start_time, "%Y-%m-%d %H:%M")
+    end_dt = start_dt + timedelta(minutes=duration_minutes)
+    dtstamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    uid = f"{uuid.uuid4()}@sumopod.chat-google"
+    attendee_cn = attendee_email.split("@", 1)[0]
+    return (
+        "BEGIN:VCALENDAR\r\n"
+        "PRODID:-//Sumopod//Chat MCP Google//EN\r\n"
+        "VERSION:2.0\r\n"
+        "CALSCALE:GREGORIAN\r\n"
+        "METHOD:REQUEST\r\n"
+        "BEGIN:VEVENT\r\n"
+        f"UID:{uid}\r\n"
+        f"DTSTAMP:{dtstamp}\r\n"
+        f"DTSTART:{start_dt.strftime('%Y%m%dT%H%M%S')}\r\n"
+        f"DTEND:{end_dt.strftime('%Y%m%dT%H%M%S')}\r\n"
+        f"SUMMARY:{_escape_ics_text(summary)}\r\n"
+        f"DESCRIPTION:{_escape_ics_text(description)}\r\n"
+        f"LOCATION:{_escape_ics_text(location)}\r\n"
+        f"ORGANIZER:mailto:{organizer_email}\r\n"
+        f"ATTENDEE;CN={_escape_ics_text(attendee_cn)};RSVP=TRUE:mailto:{attendee_email}\r\n"
+        "SEQUENCE:0\r\n"
+        "STATUS:CONFIRMED\r\n"
+        "TRANSP:OPAQUE\r\n"
+        "END:VEVENT\r\n"
+        "END:VCALENDAR\r\n"
+    )
 
 
 @mcp.tool()
@@ -410,6 +473,67 @@ async def send_email(to_email: str, subject: str, body: str) -> str:
         return f"Email successfully sent to {to_email}"
     except Exception as exc:
         return f"Error sending email: {str(exc)}"
+
+
+@mcp.tool()
+async def send_calendar_invite_email(
+    to_email: str,
+    subject: str,
+    body: str,
+    summary: str,
+    start_time: str,
+    duration_minutes: int = 60,
+    description: str = "",
+    location: str = "",
+) -> str:
+    """
+    Sends an email containing an ICS calendar invitation (accept/reject capable).
+    start_time format: YYYY-MM-DD HH:MM
+    """
+    try:
+        params = _SendCalendarInviteInput.model_validate(
+            {
+                "to_email": to_email,
+                "subject": subject,
+                "body": body,
+                "summary": summary,
+                "start_time": start_time,
+                "duration_minutes": duration_minutes,
+                "description": description,
+                "location": location,
+            }
+        )
+        email_account, app_password = _get_credentials()
+        ics_content = _build_ics_invite(
+            organizer_email=email_account,
+            attendee_email=params.to_email,
+            summary=params.summary,
+            start_time=params.start_time,
+            duration_minutes=params.duration_minutes,
+            description=params.description,
+            location=params.location,
+        )
+
+        msg = EmailMessage()
+        msg["Subject"] = params.subject
+        msg["From"] = email_account
+        msg["To"] = params.to_email
+        msg["Content-Class"] = "urn:content-classes:calendarmessage"
+        msg.set_content(params.body or "Please find the calendar invitation attached.")
+        msg.add_alternative(
+            ics_content,
+            subtype="calendar",
+            charset="utf-8",
+            params={"method": "REQUEST"},
+        )
+
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+            server.login(email_account, app_password)
+            server.send_message(msg)
+
+        return f"Calendar invitation email successfully sent to {params.to_email}"
+    except Exception as exc:
+        return f"Error sending calendar invitation email: {str(exc)}"
 
 
 def run() -> None:

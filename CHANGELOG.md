@@ -4,6 +4,51 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- None yet.
+
+## [1.1.0] - 2026-02-13
+
+### Added
+- Added new Google Drive MCP server (phase 1 + 1.1) with tools:
+  - `list_drive_files`
+  - `search_drive_files`
+  - `get_drive_file_metadata`
+  - `read_drive_text_file` (non-Google Workspace files)
+  - `list_shared_with_me`
+  - `create_drive_folder`
+  - `upload_text_file`
+  - `move_drive_file`
+  - `create_drive_shared_link_to_user` (default expiration 7 days)
+  - `create_drive_public_link` (supports file/folder)
+- Added backward-compatible root wrapper entrypoint: `drive_server.py`.
+- Added comprehensive Drive test coverage (unit + smoke).
+- Added setup guide for `GOOGLE_DRIVE_ACCESS_TOKEN` in `README.md`.
+- Added live non-UI smoke test: `tests/test_live_smoke_no_ui.py` (opt-in via `RUN_LIVE_SMOKE=1`).
+- Added new non-Gemini models:
+  - `kimi-k2-thinking-251104`
+  - `seed-1-8-251228`
+  - `deepseek-r1-250528`
+  - `whisper-1`
+- Added Gmail MCP tool `send_calendar_invite_email` to deliver ICS invitation emails (`text/calendar`, accept/reject capable).
+
+### Changed
+- Added `GOOGLE_DRIVE_ACCESS_TOKEN` to `.env.template`.
+- Integrated Drive MCP server into chat orchestration server registry.
+- Updated Drive token guidance to use `https://www.googleapis.com/auth/drive` as default script scope.
+- Refactored OpenAI-compatible chat flow to support multi-round tool calls.
+- Added truncation for large tool outputs before feeding back into model context.
+- Added explicit timeout handling for OpenAI-compatible model calls (`error_http_timeout`).
+- Changed fallback default model to `azure_ai/kimi-k2.5` (when `.env` `MODEL` is missing/invalid).
+- Changed invite behavior: when user asks to invite and event is created, app now auto-sends invitation email (prefers ICS invite tool, falls back to plain email).
+
+### Fixed
+- Fixed Drive user-sharing flow for items that reject expiration (`403 cannotSetExpiration`) by auto-retrying without expiration.
+- Fixed partial non-Gemini responses that stopped after intermediate tool-intent text by continuing tool rounds until final answer.
+
+### Quality
+- Expanded chat orchestration tests for multi-round OpenAI-compatible tool calls and timeout behavior.
+
 ## [1.0.2] - 2026-02-13
 
 ### Changed
@@ -48,3 +93,4 @@ All notable changes to this project will be documented in this file.
 
 ### Quality
 - Test baseline for this release: `31 passed`.
+

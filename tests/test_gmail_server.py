@@ -225,6 +225,51 @@ async def test_send_email(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_send_calendar_invite_email(monkeypatch):
+    calls = {"login": None, "message": None}
+
+    class FakeSMTP:
+        def __init__(self, host, port):
+            assert host == "smtp.gmail.com"
+            assert port == 465
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def login(self, user, password):
+            calls["login"] = (user, password)
+
+        def send_message(self, message):
+            calls["message"] = message
+
+    monkeypatch.setattr(gmail_server.smtplib, "SMTP_SSL", FakeSMTP)
+    result = await gmail_server.send_calendar_invite_email(
+        to_email="dest@example.com",
+        subject="Invitation: Lunch",
+        body="Please accept/reject this invite.",
+        summary="Lunch Meeting",
+        start_time="2026-02-14 14:00",
+        duration_minutes=60,
+        description="Location: Tatsu",
+        location="Tatsu",
+    )
+
+    assert "Calendar invitation email successfully sent" in result
+    assert calls["login"] == ("tester@example.com", "app-password")
+    message = calls["message"]
+    assert message is not None
+    assert message["To"] == "dest@example.com"
+    assert message["Subject"] == "Invitation: Lunch"
+    text = message.as_string()
+    assert "BEGIN:VCALENDAR" in text
+    assert "METHOD:REQUEST" in text
+    assert "SUMMARY:Lunch Meeting" in text
+
+
+@pytest.mark.asyncio
 async def test_list_recent_emails_invalid_count(monkeypatch):
     monkeypatch.setattr(
         gmail_server,

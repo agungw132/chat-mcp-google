@@ -7,21 +7,46 @@
 ![Validation: Pydantic](https://img.shields.io/badge/validation-Pydantic-E92063)
 ![Tests: pytest](https://img.shields.io/badge/tests-pytest-22c55e)
 
-A production-oriented Gradio chat application that integrates LLM tool-calling with three Google-focused MCP servers:
+A production-oriented Gradio chat application that integrates LLM tool-calling with four Google-focused MCP servers:
 - Gmail (IMAP/SMTP)
 - Google Calendar (CalDAV)
 - Google Contacts (CardDAV)
+- Google Drive (Drive REST API)
 
 The application supports two model backends:
 - Direct Gemini models via `google-genai`
 - OpenAI-compatible models via `BASE_URL` and `API_KEY`
 
+Current OpenAI-compatible (non-Gemini) models:
+- `deepseek-v3-2-251201`
+- `deepseek-r1-250528`
+- `glm-4-7-251222`
+- `glm-5`
+- `kimi-k2-250905`
+- `kimi-k2-thinking-251104`
+- `seed-1-8-251228`
+- `whisper-1`
+- `azure_ai/kimi-k2.5`
+
+Current Gemini models:
+- `gemini-3-flash-preview`
+- `gemini-3-pro-preview`
+- `gemini-2.5-pro`
+- `gemini-2.5-flash`
+- `gemini-2.5-flash-lite`
+
 ## Key Features
 
 - Gradio chat interface with model selection.
 - Automatic MCP tool discovery and tool-calling.
-- Integrated Gmail, Calendar, and Contacts actions.
+- Multi-round tool-call orchestration for OpenAI-compatible models (tool -> tool -> final answer).
+- Integrated Gmail, Calendar, Contacts, and Drive actions.
+- Auto-invite flow: when prompt includes `invite` + email and event is created, app sends invitation via Gmail MCP.
+- Calendar invitation delivery supports `.ics` (`text/calendar`) accept/reject flow.
+- Drive phase 1.1 includes folder creation, text upload, move, user sharing, and public link creation.
 - Contacts search resilience: automatically falls back to HTTP/1.1 when `h2` is unavailable.
+- Tool output truncation before model feedback to reduce context bloat on large tool results.
+- Explicit timeout handling for OpenAI-compatible model calls.
 - Request-level metrics in `metrics.jsonl`.
 - Runtime logs in `chat_app.log`.
 - Pydantic-based validation for app settings, payload normalization, and tool inputs.
@@ -58,10 +83,12 @@ flowchart TD
     TOOL --> MG[gmail_server.py]
     TOOL --> MC[calendar_server.py]
     TOOL --> MT[contacts_server.py]
+    TOOL --> MD[drive_server.py]
 
     MG --> GI[Gmail IMAP/SMTP]
     MC --> GC[Google Calendar CalDAV]
     MT --> GCT[Google Contacts CardDAV]
+    MD --> GD[Google Drive REST API]
 
     TOOL --> LLM
     RESP --> UI
@@ -76,6 +103,7 @@ flowchart TD
 - `gmail_server.py`: Gmail MCP wrapper entrypoint.
 - `calendar_server.py`: Calendar MCP wrapper entrypoint.
 - `contacts_server.py`: Contacts MCP wrapper entrypoint.
+- `drive_server.py`: Drive MCP wrapper entrypoint.
 - `src/chat_google/chat_service.py`: main orchestration logic.
 - `src/chat_google/ui.py`: Gradio UI composition and event wiring.
 - `src/chat_google/constants.py`: model list and default model resolver.
@@ -94,6 +122,7 @@ flowchart TD
 - Google account with:
   - 2-Step Verification enabled
   - App Password enabled and generated
+- Google Cloud project with Drive API enabled (for `GOOGLE_DRIVE_ACCESS_TOKEN`)
 
 ## Configuration
 
@@ -108,19 +137,22 @@ Then edit `.env`:
 ```env
 GOOGLE_ACCOUNT=you@example.com
 GOOGLE_APP_KEY=xxxxxxxxxxxxxxxx
+GOOGLE_DRIVE_ACCESS_TOKEN=your-drive-access-token
 GOOGLE_GEMINI_API_KEY=your_gemini_key
 BASE_URL=https://ai.sumopod.com
 API_KEY=your_api_key
-MODEL=gemini-3-flash-preview
+MODEL=azure_ai/kimi-k2.5
 ```
 
 Variable reference:
 - `GOOGLE_ACCOUNT`: Google account used by Gmail/Calendar/Contacts MCP servers.
 - `GOOGLE_APP_KEY`: Google App Password (16 characters, no spaces).
+- `GOOGLE_DRIVE_ACCESS_TOKEN`: OAuth 2.0 Bearer token for Drive MCP (not App Password).
 - `GOOGLE_GEMINI_API_KEY`: required for models that start with `gemini`.
 - `BASE_URL`: OpenAI-compatible API base URL for non-Gemini models.
 - `API_KEY`: bearer token for `BASE_URL`.
 - `MODEL`: initial default model for the UI dropdown (must exist in available model list).
+  - If missing/invalid, app fallback default is `azure_ai/kimi-k2.5`.
 
 ## How to Get Google App Password (Personal Account)
 
@@ -135,6 +167,31 @@ Important notes:
 - App Passwords are only available when 2-Step Verification is enabled.
 - App Passwords may be blocked by organization policies (Workspace admin), Advanced Protection, or strict 2SV configurations.
 - Changing the main Google account password may revoke existing App Passwords.
+
+## How to Get `GOOGLE_DRIVE_ACCESS_TOKEN` (Individual Account)
+
+1. Open Google Cloud Console: `https://console.cloud.google.com/`.
+2. Create/select a project, then enable Google Drive API: `APIs & Services` -> `Library` -> `Google Drive API` -> `Enable`.
+3. Configure OAuth consent screen (`External` is fine for personal use) and add your account as test user if needed.
+4. Create OAuth Client ID credentials (`Desktop app`) in `APIs & Services` -> `Credentials`.
+5. Open OAuth 2.0 Playground: `https://developers.google.com/oauthplayground/`.
+6. Click the settings icon in OAuth Playground and enable `Use your own OAuth credentials`, then input your client ID/secret.
+7. Select scope `https://www.googleapis.com/auth/drive`, authorize, and exchange code for tokens.
+8. Copy the `access_token` value into `.env` as `GOOGLE_DRIVE_ACCESS_TOKEN`.
+
+Important notes:
+- This token is an OAuth Bearer token, not App Password.
+- Access token is short-lived (commonly around 1 hour). When expired, generate a new one.
+- This MCP phase intentionally uses access token only (no auto refresh flow).
+
+Programmatic helper script (root):
+
+```powershell
+uv run --with google-auth-oauthlib python get_google_drive_access_token.py --client-secret client_secret.json
+```
+
+Default scope in this script is full Drive access:
+- `https://www.googleapis.com/auth/drive`
 
 ## Recommended uv Workflow
 
@@ -163,6 +220,7 @@ Default local URL: `http://127.0.0.1:7860`
 uv run python gmail_server.py
 uv run python calendar_server.py
 uv run python contacts_server.py
+uv run python drive_server.py
 ```
 
 ## MCP Tools
@@ -177,6 +235,7 @@ uv run python contacts_server.py
 - `search_emails_by_label(label, count=5)`
 - `search_emails(query)`
 - `send_email(to_email, subject, body)`
+- `send_calendar_invite_email(to_email, subject, body, summary, start_time, duration_minutes=60, description='', location='')`
 
 ### Calendar
 - `summarize_agenda(timeframe='24h', days=None)`
@@ -184,9 +243,25 @@ uv run python contacts_server.py
 - `add_event(summary, start_time, duration_minutes=60, description='')`
 - `search_events(query)`
 
+Note:
+- `add_event` still has no structured attendees/location fields.
+- Invitation is handled by Gmail MCP (`send_calendar_invite_email`) with ICS data so recipient can accept/reject.
+
 ### Contacts
 - `list_contacts(limit=10)`
 - `search_contacts(query)`
+
+### Drive (Phase 1 + 1.1)
+- `list_drive_files(limit=10, folder_id=None, mime_type=None)`
+- `search_drive_files(query, limit=10, folder_id=None)`
+- `get_drive_file_metadata(file_id)`
+- `read_drive_text_file(file_id, max_chars=8000)` (non-Google Workspace files only)
+- `list_shared_with_me(limit=10)`
+- `create_drive_folder(name, parent_id=None)`
+- `upload_text_file(name, content, parent_id=None)`
+- `move_drive_file(file_id, new_parent_id)` (works for files/folders)
+- `create_drive_shared_link_to_user(item_id, user_email, role='reader', send_notification=True, message='', expires_in_days=7)`
+- `create_drive_public_link(item_id, role='reader', allow_discovery=False)` (file/folder)
 
 ## Testing
 
@@ -200,8 +275,25 @@ Coverage includes:
 - All Gmail tools
 - All Calendar tools
 - All Contacts tools
+- All Drive phase-1 and phase-1.1 tools
 - Core chat orchestration paths (Gemini, OpenAI-compatible, streaming, tool-calls, payload normalization)
 - Default model resolution behavior
+
+### Live Smoke Test (No UI)
+
+Use this to validate a real query directly through `chat_service` (without Gradio UI):
+
+```powershell
+$env:RUN_LIVE_SMOKE="1"
+$env:SMOKE_MODEL="azure_ai/kimi-k2.5"
+$env:SMOKE_PROMPT="find recent emails from social school, summarize"
+uv run --with pytest --with pytest-asyncio --with-requirements requirements.txt pytest -q tests/test_live_smoke_no_ui.py -m live_smoke
+```
+
+Notes:
+- This test calls real external APIs and can consume quota.
+- If `SMOKE_MODEL` starts with `gemini`, set `GOOGLE_GEMINI_API_KEY`.
+- For non-Gemini models, set `BASE_URL` and `API_KEY`.
 
 ## Observability
 
@@ -230,11 +322,24 @@ Coverage includes:
 4. Non-Gemini requests fail
 - Verify `BASE_URL` and `API_KEY`.
 - Confirm your endpoint supports chat completions and tool-calling.
+- The app now supports multi-round tool calls for non-Gemini models; if a query is very broad and times out, retry with a narrower prompt.
 
-5. Contact search says "technical issue"
+5. Invite flow expectations
+- If prompt includes `invite` and one or more email addresses, app attempts to send ICS invitation email after event creation.
+- If calendar invite delivery cannot be used, app falls back to plain text email.
+- Check `metrics.jsonl` `invoked_tools` for `send_calendar_invite_email` or `send_email`.
+
+6. Contact search says "technical issue"
 - The contacts server now auto-disables HTTP/2 when `h2` is missing, so it can still run via HTTP/1.1.
 - If Google CardDAV `REPORT` search returns `5xx`, the server automatically falls back to `PROPFIND` + local filtering.
 - Check `chat_app.log` for lines containing `search_contacts REPORT failed` and `fallback PROPFIND completed`.
+
+7. Drive tools fail with 401/403
+- Check `GOOGLE_DRIVE_ACCESS_TOKEN` is set and not expired.
+- Ensure Drive API is enabled in your Google Cloud project.
+- Ensure OAuth scope includes `https://www.googleapis.com/auth/drive` (default script scope).
+- Remember: `GOOGLE_APP_KEY` cannot be used for Drive API.
+- If write/share/public-link tools fail with 403, re-generate token with full Drive scope.
 
 ## Security Notes
 

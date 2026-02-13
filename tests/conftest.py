@@ -11,10 +11,12 @@ if str(SRC_DIR) not in sys.path:
 
 
 @pytest.fixture(autouse=True)
-def _default_env(monkeypatch):
+def _default_env(monkeypatch, request):
+    if request.node.get_closest_marker("live_smoke"):
+        return
     monkeypatch.setenv("GOOGLE_ACCOUNT", "tester@example.com")
     monkeypatch.setenv("GOOGLE_APP_KEY", "app-password")
+    monkeypatch.setenv("GOOGLE_DRIVE_ACCESS_TOKEN", "drive-test-token")
     monkeypatch.setenv("GOOGLE_GEMINI_API_KEY", "gemini-test-key")
     monkeypatch.setenv("BASE_URL", "https://api.example.com")
     monkeypatch.setenv("API_KEY", "openai-test-key")
-
