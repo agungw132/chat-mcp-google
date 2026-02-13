@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.1] - 2026-02-13
+
+### Added
+- Added Sumopod model option: `azure_ai/kimi-k2.5`.
+
+### Changed
+- Updated chat UI text to English (`Type your message...`, `Retry`, `Clear`, `Select Model`).
+- Updated default model instructions to English for both Gemini and OpenAI-compatible flows.
+- Standardized user-facing error messages in chat flow to English.
+
+### Quality
+- Updated and validated constants tests for the new model default resolution path.
+
 ## [1.0.0] - 2026-02-13
 
 ### Added

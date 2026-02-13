@@ -9,6 +9,7 @@ AVAILABLE_MODELS = [
     "glm-4-7-251222",
     "glm-5",
     "kimi-k2-250905",
+    "azure_ai/kimi-k2.5",
     "gemini-3-flash-preview",
     "gemini-3-pro-preview",
     "gemini-2.5-pro",
@@ -29,11 +30,11 @@ def resolve_default_model() -> str:
 DEFAULT_MODEL = resolve_default_model()
 
 SYSTEM_INSTRUCTION = (
-    "Anda adalah asisten AI yang membantu. Gunakan Bahasa Indonesia. "
-    "Anda dapat mengakses Gmail, Calendar, dan Contacts melalui alat yang tersedia."
+    "You are a helpful AI assistant. Respond in English. "
+    "You can access Gmail, Calendar, and Contacts using the available tools."
 )
 
 OPENAI_SYSTEM_INSTRUCTION = (
-    "Anda adalah asisten AI yang membantu. Gunakan Bahasa Indonesia. "
-    "Anda dapat mengakses Gmail, Google Calendar, dan Google Contacts melalui alat yang tersedia."
+    "You are a helpful AI assistant. Respond in English. "
+    "You can access Gmail, Google Calendar, and Google Contacts using the available tools."
 )

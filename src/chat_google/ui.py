@@ -11,17 +11,17 @@ def build_demo() -> gr.Blocks:
         chatbot = gr.Chatbot()
 
         with gr.Row():
-            msg_input = gr.Textbox(placeholder="Ketik pesan di sini...", scale=9)
-            retry_btn = gr.Button("Ulangi", scale=1)
+            msg_input = gr.Textbox(placeholder="Type your message...", scale=9)
+            retry_btn = gr.Button("Retry", scale=1)
 
         with gr.Row():
             model_dropdown = gr.Dropdown(
                 choices=AVAILABLE_MODELS,
                 value=DEFAULT_MODEL,
-                label="Pilih Model",
+                label="Select Model",
                 scale=8,
             )
-            clear_btn = gr.Button("Bersihkan", scale=2)
+            clear_btn = gr.Button("Clear", scale=2)
 
         last_message = gr.State("")
 
@@ -66,4 +66,3 @@ def build_demo() -> gr.Blocks:
 def main() -> None:
     demo = build_demo()
     demo.launch()
-

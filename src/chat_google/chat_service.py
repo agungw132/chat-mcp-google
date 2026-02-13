@@ -242,7 +242,7 @@ async def chat(message, history, model_name):
                     response = await chat_session.send_message_async(normalized_message)
                 except google_exceptions.ResourceExhausted:
                     status = "error_gemini_quota_exhausted"
-                    full_response = "Error: Kuota API Gemini Anda habis."
+                    full_response = "Error: Your Gemini API quota is exhausted."
                     current_history[-1]["content"] = full_response
                     yield current_history
                     return
@@ -269,7 +269,7 @@ async def chat(message, history, model_name):
                         if not session:
                             status = "error_tool_session_not_found"
                             full_response = (
-                                f"Error: Tool '{tool_name}' tidak tersedia dari MCP session."
+                                f"Error: Tool '{tool_name}' is not available from MCP session."
                             )
                             current_history[-1]["content"] = full_response
                             yield current_history
@@ -413,7 +413,7 @@ async def chat(message, history, model_name):
     except Exception as exc:  # pragma: no cover - defensive fallback
         status = "error_exception"
         logger.error("Chat Error: %s", exc, exc_info=True)
-        current_history[-1]["content"] = f"Kesalahan: {str(exc)}"
+        current_history[-1]["content"] = f"Error: {str(exc)}"
         yield current_history
     finally:
         duration = time.time() - start_time
