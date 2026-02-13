@@ -119,10 +119,24 @@ Keterangan:
 - Model non-Gemini menggunakan `BASE_URL` + `API_KEY`.
 - `MODEL` dipakai sebagai default awal model di dropdown UI (jika valid dan ada di daftar model tersedia).
 
+## Workflow uv yang Rapi
+
+Gunakan workflow ini agar dependency project tersinkron dengan benar:
+
+```powershell
+uv sync
+uv run python app.py
+```
+
+Catatan:
+- `uv sync` = install/sync dependency project ke environment `uv`.
+- `uv run` = menjalankan command di environment tersebut.
+- Jika langsung `uv run ...`, `uv` bisa tetap resolve dependency, tapi untuk workflow team/proyek disarankan tetap `uv sync` dulu.
+
 ## Menjalankan App
 
 ```powershell
-python app.py
+uv run python app.py
 ```
 
 Default URL Gradio: `http://127.0.0.1:7860`.
@@ -130,9 +144,9 @@ Default URL Gradio: `http://127.0.0.1:7860`.
 ## Menjalankan MCP Server Manual
 
 ```powershell
-python gmail_server.py
-python calendar_server.py
-python contacts_server.py
+uv run python gmail_server.py
+uv run python calendar_server.py
+uv run python contacts_server.py
 ```
 
 ## Daftar Tools MCP
