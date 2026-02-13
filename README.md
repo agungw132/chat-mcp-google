@@ -29,11 +29,11 @@ Alur `chat_service`:
 
 ```mermaid
 flowchart LR
-    U[User] --> UI[Gradio UI\nsrc/chat_google/ui.py]
-    UI --> CS[Chat Service\nsrc/chat_google/chat_service.py]
+    U[User] --> UI[Gradio UI<br/>src/chat_google/ui.py]
+    UI --> CS[Chat Service<br/>src/chat_google/chat_service.py]
 
     CS -->|gemini*| G[Gemini API]
-    CS -->|non-gemini| O[OpenAI-compatible API\nBASE_URL/v1/chat/completions]
+    CS -->|non-gemini| O[OpenAI-compatible API<br/>BASE_URL/v1/chat/completions]
 
     CS <-->|stdio MCP| MG[gmail_server.py]
     CS <-->|stdio MCP| MC[calendar_server.py]
