@@ -5,7 +5,26 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Added
-- None yet.
+- Added comprehensive agent-oriented MCP READMEs in `docs/mcp-servers/` for:
+  - `gmail`
+  - `calendar`
+  - `contacts`
+  - `drive`
+  - `maps`
+
+### Changed
+- Chat orchestration now derives a compact MCP policy summary from `docs/mcp-servers/*.md` and injects it into model system instructions.
+- Added intent-based MCP tool gating so model tool schemas are filtered to relevant server domains per request.
+- Tool execution feedback to models now uses a structured contract (`success`, `error`, `data`) in both Gemini and OpenAI-compatible flows.
+- User responses now include contextual warning when required MCP server(s) are unavailable for the current request.
+- Request ID format now includes UUID suffix for better collision safety in concurrent runs.
+
+### Quality
+- Expanded chat orchestration tests for:
+  - intent-based tool filtering
+  - runtime policy injection
+  - unavailable-server warning surfacing
+  - structured tool-result contract handling
 
 ## [1.1.2] - 2026-02-14
 

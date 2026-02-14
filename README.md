@@ -40,6 +40,8 @@ Current Gemini models:
 
 - Gradio chat interface with model selection.
 - Automatic MCP tool discovery and tool-calling.
+- Intent-based MCP tool gating (only relevant server tools are sent to the model per request).
+- Runtime MCP policy injection from `docs/mcp-servers/*.md` into system instructions.
 - Multi-round tool-call orchestration for OpenAI-compatible models (tool -> tool -> final answer).
 - Integrated Gmail, Calendar, Contacts, Drive, and Maps actions.
 - Auto-invite flow: when prompt includes `invite` + email and event is created, app sends invitation via Gmail MCP.
@@ -47,6 +49,8 @@ Current Gemini models:
 - Drive phase 1.1 includes folder creation, text upload, move, user sharing, and public link creation.
 - Contacts search resilience: automatically falls back to HTTP/1.1 when `h2` is unavailable.
 - Tool output truncation before model feedback to reduce context bloat on large tool results.
+- Structured tool-result contract (`success`, `error`, `data`) between MCP tool execution and model context.
+- Request-scoped MCP availability notice in final response when required server(s) are down.
 - Explicit timeout handling for OpenAI-compatible model calls.
 - Request-level metrics in `metrics.jsonl`.
 - Runtime logs in `chat_app.log`.
@@ -65,9 +69,11 @@ uv run python app.py
 The `chat_service` flow is:
 1. Start MCP servers through stdio (`uv run python <server>.py`).
 2. Collect tool schemas from each server.
-3. Send user input to the selected model backend first.
-4. The model either responds directly or requests a tool call.
-5. If a tool call is requested, execute the corresponding MCP tool and return the result to the model.
+3. Infer intent domain from user input and filter to relevant server tools.
+4. Inject MCP policy summary (from `docs/mcp-servers/*.md`) into system instruction.
+5. Send user input to the selected model backend.
+6. The model either responds directly or requests tool calls.
+7. Execute requested MCP tools, normalize results into a structured contract, then return them to the model.
 
 ```mermaid
 flowchart TD
@@ -75,11 +81,13 @@ flowchart TD
     UI --> CS[Chat Service<br/>src/chat_google/chat_service.py]
 
     CS --> MCPREG[Initialize MCP sessions<br/>and collect tool schemas]
+    CS --> ROUTE[Infer intent and filter<br/>relevant MCP tools]
+    CS --> POLICY[Load MCP policy summary<br/>from docs/mcp-servers]
     CS --> LLM[Selected LLM backend<br/>Gemini or OpenAI-compatible]
 
     LLM --> DEC{Tool call needed?}
     DEC -- No --> RESP[Direct model response]
-    DEC -- Yes --> TOOL[Execute requested MCP tool]
+    DEC -- Yes --> TOOL[Execute requested MCP tool<br/>normalize result contract]
 
     TOOL --> MG[gmail_server.py]
     TOOL --> MC[calendar_server.py]
@@ -93,6 +101,8 @@ flowchart TD
     MD --> GD[Google Drive REST API]
     MM --> GM[Google Maps APIs]
 
+    ROUTE --> LLM
+    POLICY --> LLM
     TOOL --> LLM
     RESP --> UI
 
@@ -113,6 +123,7 @@ flowchart TD
 - `src/chat_google/constants.py`: model list and default model resolver.
 - `src/chat_google/models.py`: shared Pydantic models.
 - `src/chat_google/mcp_servers/*.py`: MCP server implementations.
+- `docs/mcp-servers/*.md`: agent-oriented MCP usage guides consumed as runtime MCP policy summary.
 - `tests/`: comprehensive async/unit test suite.
 - `requirements.txt`: runtime dependencies.
 - `requirements-dev.txt`: runtime + test dependencies.
@@ -425,6 +436,7 @@ Notes:
   - Core fields: `timestamp`, `request_id`, `model`, `user_question`, `duration_seconds`, `invoked_tools`, `invoked_servers`, `status`
   - Error fields: `error_message`, `tool_errors`
   - `status` can include `success_with_tool_errors` when a response completes but one or more tools returned error content.
+  - `request_id` format: `<YYYYMMDD-HHMMSS>-<8hex>` (collision-safe for concurrent requests).
 
 ## Troubleshooting
 
@@ -467,6 +479,11 @@ Notes:
 - Ensure OAuth scope includes `https://www.googleapis.com/auth/drive` (default script scope).
 - Remember: `GOOGLE_APP_KEY` cannot be used for Drive API.
 - If write/share/public-link tools fail with 403, re-generate token with full Drive scope.
+
+8. Response includes warning about unavailable MCP server
+- This appears when your request domain needs a server that failed to initialize.
+- Check `chat_app.log` lines containing `Failed to start MCP server`.
+- Start the affected server manually (`uv run python <server>_server.py`) and retry.
 
 ## Security Notes
 

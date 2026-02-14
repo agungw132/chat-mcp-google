@@ -1121,3 +1121,111 @@ async def test_chat_gemini_share_tool_always_shows_url(monkeypatch):
     assert "Done sharing." in final_text
     assert "Shared URL(s):" in final_text
     assert "https://drive.google.com/drive/folders/f123" in final_text
+
+
+def test_infer_requested_servers_invite_and_maps():
+    servers = chat_service._infer_requested_servers(
+        "please invite alice@example.com and set location near Mall of the Netherlands"
+    )
+    assert "calendar" in servers
+    assert "gmail" in servers
+    assert "maps" in servers
+
+
+def test_build_tool_result_contract_prefers_structured_error():
+    raw = json.dumps(
+        {
+            "success": False,
+            "error": {"code": "forbidden", "message": "Not enough permission"},
+            "data": {"id": "abc"},
+        }
+    )
+    contract = chat_service._build_tool_result_contract(
+        tool_name="create_drive_public_link",
+        server_name="drive",
+        raw_text=raw,
+    )
+    assert contract["success"] is False
+    assert contract["error_code"] == "forbidden"
+    assert "permission" in contract["error_message"]
+    payload = chat_service._tool_result_for_model(contract)
+    assert payload["success"] is False
+    assert payload["error"]["code"] == "forbidden"
+
+
+@pytest.mark.asyncio
+async def test_chat_openai_filters_tools_by_intent_and_injects_policy(monkeypatch):
+    class FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {"choices": [{"message": {"content": "Done"}}]}
+
+    class FakeClient:
+        def __init__(self):
+            self.last_body = None
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def post(self, *args, **kwargs):
+            self.last_body = kwargs.get("json", {})
+            return FakeResponse()
+
+    fake_client = FakeClient()
+
+    async def fake_collect(*args, **kwargs):
+        return (
+            {"list_recent_emails": object(), "search_places_text": object()},
+            {"list_recent_emails": "gmail", "search_places_text": "maps"},
+            [
+                {"type": "function", "function": {"name": "list_recent_emails"}},
+                {"type": "function", "function": {"name": "search_places_text"}},
+            ],
+            [],
+        )
+
+    monkeypatch.setattr(chat_service, "_collect_mcp_tools", fake_collect)
+    monkeypatch.setattr(chat_service.httpx, "AsyncClient", lambda: fake_client)
+
+    outputs = await _collect_stream(chat_service.chat("check my inbox", [], "azure_ai/kimi-k2.5"))
+    assert outputs[-1][-1]["content"] == "Done"
+    sent_tools = fake_client.last_body["tools"]
+    sent_tool_names = [item["function"]["name"] for item in sent_tools]
+    assert sent_tool_names == ["list_recent_emails"]
+    system_prompt = fake_client.last_body["messages"][0]["content"]
+    assert "MCP policy summary" in system_prompt
+    assert "gmail: purpose=" in system_prompt
+
+
+@pytest.mark.asyncio
+async def test_chat_openai_surfaces_unavailable_server_notice(monkeypatch):
+    async def fake_collect(*args, **kwargs):
+        return {}, {}, [], [], ["gmail"]
+
+    class FakeResponse:
+        status_code = 500
+
+        def json(self):
+            return {}
+
+    class FakeClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def post(self, *args, **kwargs):
+            return FakeResponse()
+
+    monkeypatch.setattr(chat_service, "_collect_mcp_tools", fake_collect)
+    monkeypatch.setattr(chat_service.httpx, "AsyncClient", lambda: FakeClient())
+
+    outputs = await _collect_stream(chat_service.chat("check inbox", [], "azure_ai/kimi-k2.5"))
+    content = outputs[-1][-1]["content"]
+    assert "Error: 500" in content
+    assert "MCP server(s) unavailable for this request: gmail" in content

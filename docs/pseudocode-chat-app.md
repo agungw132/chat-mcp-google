@@ -111,14 +111,17 @@ MetricsRecord:
 2. Load runtime config from .env
 3. Start MCP stdio sessions (gmail/calendar/contacts/drive/maps)
 4. Build tool schemas for selected model family (Gemini vs OpenAI-compatible)
-5. Execute multi-round tool-calling loop
-6. Apply special behavior:
+5. Infer request intent and filter tools to relevant MCP server domains
+6. Inject MCP policy summary from `docs/mcp-servers/*.md` into system prompts
+7. Execute multi-round tool-calling loop
+8. Normalize tool results into structured contract (`success/error/data`) before feeding model context
+9. Apply special behavior:
    - normalize relative date words for add_event
    - auto-send invites when user asks "invite ..."
    - force display of Drive share URLs in final answer
    - retry transient Gemini API errors
-7. Persist metrics to metrics.jsonl
-8. Write structured logs to chat_app.log
+10. Persist metrics to metrics.jsonl
+11. Write structured logs to chat_app.log
 ```
 
 ## 4.2 Core helper pseudocode
@@ -238,6 +241,7 @@ INIT maps:
 INIT lists:
     mcp_tools (OpenAI-compatible schema)
     gemini_function_declarations
+    unavailable_servers
 
 FOR each server config:
     START stdio server via:
@@ -250,8 +254,80 @@ FOR each server config:
         map tool -> session + server name
         append OpenAI-compatible function schema
         append Gemini FunctionDeclaration schema (sanitized)
+ON server startup failure:
+    append server name to unavailable_servers
 
-RETURN all maps/lists
+RETURN all maps/lists plus unavailable_servers
+```
+
+### `_infer_requested_servers(message_text)`
+
+```text
+INIT requested = empty set
+FOR each server domain keyword set:
+    IF message contains keyword:
+        add server to requested
+
+IF invite intent is present:
+    add "calendar" and "gmail"
+
+RETURN requested
+```
+
+### `_build_mcp_policy_context(server_names)`
+
+```text
+READ and cache docs from docs/mcp-servers/*.md
+FOR each requested/discovered server:
+    extract concise purpose + tool catalog + key constraints
+BUILD compact policy summary text block
+RETURN policy summary for system prompt injection
+```
+
+### `_filter_tooling_for_servers(...)`
+
+```text
+IF no server filter:
+    RETURN original tool/session maps
+
+COMPUTE allowed tool names from filtered servers
+FILTER:
+    tool_to_session
+    tool_to_server_name
+    mcp_tools
+    gemini_function_declarations
+RETURN filtered structures
+```
+
+### `_build_tool_result_contract(...)`
+
+```text
+INPUT:
+    tool_name, server_name, raw tool output text, optional exception
+OUTPUT:
+    {
+      tool_name, server_name,
+      success: bool,
+      error_code: str|None,
+      error_message: str|None,
+      data: {...},
+      raw_text: str
+    }
+
+IF exception exists:
+    success=false
+    error_code="tool_exception"
+    error_message=exception text
+ELSE IF tool output is JSON object:
+    extract success/error/data fields when present
+ELSE IF output looks like error text:
+    success=false
+    error_code="tool_error_text"
+    error_message=raw text
+ELSE:
+    success=true, data.text=raw text
+
+RETURN contract
 ```
 
 ## 4.3 Main flow: `async chat(message, history, model_name)`
@@ -263,7 +339,7 @@ RETURN all maps/lists
    - normalize history structure
 
 2) Initialize request state
-   - start timer, request_id
+   - start timer, request_id (`YYYYMMDD-HHMMSS-<8hex>`)
    - invoked_tools[], invoked_servers set
    - status="success", error_message=None, tool_errors[]
    - share_urls[] for Drive share tool outputs
@@ -272,6 +348,11 @@ RETURN all maps/lists
 
 3) Open MCP sessions and collect tool schemas
    - call _collect_mcp_tools(...)
+   - get unavailable server list (if startup failures occur)
+   - infer requested server domains from user prompt
+   - filter tools to relevant domains when intent can be inferred
+   - build MCP policy summary from docs and append to system instruction
+   - keep unavailable-server warning for final response when relevant
 
 4) Branch by model family
 
@@ -292,10 +373,11 @@ RETURN all maps/lists
       - else execute each requested tool:
           normalize add_event args if needed
           call MCP tool session
+          normalize tool output to structured contract
           track output/errors/timing
           capture share URLs from drive share tools
           track add_event args for auto-invite
-          append function_response parts back to Gemini contents
+          append structured function_response parts back to Gemini contents
       - on API exceptions:
           map to quota / transient / generic error messages
           yield error response
@@ -323,10 +405,11 @@ RETURN all maps/lists
                   parse JSON args
                   normalize add_event args if needed
                   execute MCP tool
+                  normalize tool output to structured contract
                   track outputs/errors/timing
                   capture share URLs
                   track add_event args for auto-invite
-                  append tool message to api_messages
+                  append structured tool payload JSON to api_messages
               if all tool calls error in 2 consecutive rounds:
                   return repeated-failure error
       - if loop exhausted:

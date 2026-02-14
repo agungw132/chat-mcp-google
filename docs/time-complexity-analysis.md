@@ -36,7 +36,12 @@ Notes:
 
 - `normalize_history` + `normalize_content_text`: `O(X)`
 - Extract invite emails / detect intent / regex helpers: `O(|message|)`
+- Intent keyword routing (`_infer_requested_servers`): `O(|message| * keyword_count)` with small fixed keyword sets.
+- MCP policy summary load from `docs/mcp-servers/*.md`:
+  - first load (cold): `O(D)` where `D` is total docs size
+  - subsequent requests (cache hit): `O(1)` for cache access + `O(selected_servers)` assembly
 - MCP server startup and tool discovery per request: `O(S + T)` plus process startup + network overhead.
+- Tool filtering by inferred server set: `O(T)` per request.
 
 ## 2.2 Model orchestration loops
 
@@ -54,11 +59,13 @@ Notes:
 - In implementation:
 - round bound `max_tool_rounds = 8`
 - each round may append more context; payload size grows across rounds.
+- however, tool gating reduces candidate tool schema size from `T` to `T'` (`T' <= T`) for most domain-specific prompts.
 
 ## 2.3 Tool output post-processing
 
 - URL extraction + append missing URLs: `O(response_length + num_urls)`
 - Tool output truncation: `O(tool_output_length)` per tool call
+- Tool result contract normalization (JSON parse/fallback): `O(tool_output_length)` per tool call
 - Metrics logging: amortized `O(1)` append.
 
 ## 2.4 Practical bottleneck
@@ -173,7 +180,18 @@ Largest recurring overhead is repeated MCP session bootstrap (`uv run python <se
 
 ## 8) End-to-End Hotspots (Priority Order)
 
-## 8.1 P1 - Reuse MCP sessions across chat requests
+## 8.1 P0 (Implemented) - Intent-based tool gating + MCP policy injection
+
+- Implemented:
+- infer requested server domains from prompt text
+- filter tool schemas to relevant server subset
+- inject compact MCP policy summary derived from `docs/mcp-servers/*.md`
+- Complexity effect:
+- adds small local overhead `O(T + D_cold)` / `O(T)` with cache warm
+- typically reduces LLM tool-schema payload size from `T` to `T'`
+- Expected impact: lower prompt/tool-selection noise, lower model latency, and better tool precision.
+
+## 8.2 P1 - Reuse MCP sessions across chat requests
 
 Current behavior starts and initializes all servers for every request.
 
@@ -183,7 +201,7 @@ Current behavior starts and initializes all servers for every request.
 - Reconnect only on failure.
 - Expected impact: significant latency reduction per chat turn.
 
-## 8.2 P1 - Optimize Contacts `search_contacts` fallback path
+## 8.3 P1 - Optimize Contacts `search_contacts` fallback path
 
 - Current worst case `O(F)` with many GET calls even when only top 1-5 matches needed.
 - Improvement options:
@@ -192,7 +210,7 @@ Current behavior starts and initializes all servers for every request.
 - Stop fetching as soon as enough high-confidence matches found.
 - Expected impact: major reduction for large address books.
 
-## 8.3 P1 - Parallelize independent tool calls in a round
+## 8.4 P1 - Parallelize independent tool calls in a round
 
 - Current execution is sequential per tool call.
 - Improvement:
@@ -202,7 +220,7 @@ Current behavior starts and initializes all servers for every request.
 - session/client thread-safety is guaranteed (or separated by server/session).
 - Expected impact: lower round latency when model emits multiple independent calls.
 
-## 8.4 P2 - Cap context growth in multi-round orchestration
+## 8.5 P2 - Cap context growth in multi-round orchestration
 
 - Repeatedly appending tool outputs can increase request payload size across rounds.
 - Improvement:
@@ -210,14 +228,14 @@ Current behavior starts and initializes all servers for every request.
 - Keep only latest relevant turns + structured memory summary.
 - Expected impact: reduced model latency/cost and lower timeout probability.
 
-## 8.5 P2 - Stream/truncate Drive file reads earlier
+## 8.6 P2 - Stream/truncate Drive file reads earlier
 
 - `read_drive_text_file` downloads full content before truncation.
 - Improvement:
 - Use ranged reads/streaming and stop after `max_chars` threshold when feasible.
 - Expected impact: better performance on large files.
 
-## 8.6 P2 - Reduce unnecessary sorting in Calendar lists
+## 8.7 P2 - Reduce unnecessary sorting in Calendar lists
 
 - `sorted(results)` introduces `O(N log N)`.
 - Improvement:
@@ -225,7 +243,7 @@ Current behavior starts and initializes all servers for every request.
 - or request sorted order upstream.
 - Expected impact: moderate CPU savings for larger event sets.
 
-## 8.7 P3 - Batch IMAP fetch patterns in Gmail tools
+## 8.8 P3 - Batch IMAP fetch patterns in Gmail tools
 
 - Several tools fetch message headers one-by-one.
 - Improvement:
@@ -233,7 +251,7 @@ Current behavior starts and initializes all servers for every request.
 - Minimize repeated mailbox select calls.
 - Expected impact: moderate latency reduction for larger `count` values.
 
-## 8.8 P3 - Add response caching for frequent Maps lookups
+## 8.9 P3 - Add response caching for frequent Maps lookups
 
 - Repeated geocode/place details for the same query can trigger duplicate API calls.
 - Improvement:
@@ -252,6 +270,7 @@ Current behavior starts and initializes all servers for every request.
 1. Persistent MCP session manager (singleton/lifecycle-managed).
 2. Contacts search optimization + caching.
 3. Concurrent execution for independent multi-tool rounds.
+4. Standardize MCP server native JSON error contracts to reduce plain-text fallback parsing.
 
 ## Phase B
 

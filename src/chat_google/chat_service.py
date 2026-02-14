@@ -8,7 +8,9 @@ import os
 import re
 import time
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 import httpx
 from dotenv import load_dotenv
@@ -67,6 +69,74 @@ TIME_PATTERN = re.compile(r"\b([01]?\d|2[0-3])[:.]([0-5]\d)\b")
 HOUR_ONLY_PATTERN = re.compile(r"\b(?:jam|pukul|at)\s*([01]?\d|2[0-3])\b", re.IGNORECASE)
 EMAIL_PATTERN = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")
 INVITE_KEYWORDS = ("invite", "invitation", "undang", "undangan")
+MCP_DOC_FILENAMES = {
+    "gmail": "gmail.md",
+    "calendar": "calendar.md",
+    "contacts": "contacts.md",
+    "drive": "drive.md",
+    "maps": "maps.md",
+}
+SERVER_INTENT_KEYWORDS = {
+    "gmail": (
+        "gmail",
+        "email",
+        "mail",
+        "inbox",
+        "unread",
+        "label",
+        "subject",
+        "kirim email",
+        "send email",
+        "reply email",
+    ),
+    "calendar": (
+        "calendar",
+        "agenda",
+        "event",
+        "meeting",
+        "appointment",
+        "schedule",
+        "jadwal",
+        "acara",
+        "reminder",
+    ),
+    "contacts": (
+        "contacts",
+        "contact",
+        "kontak",
+        "phone number",
+        "nomor",
+        "address book",
+    ),
+    "drive": (
+        "drive",
+        "gdrive",
+        "google drive",
+        "file",
+        "folder",
+        "upload",
+        "download",
+        "share file",
+        "shared link",
+        "permission",
+    ),
+    "maps": (
+        "maps",
+        "google maps",
+        "direction",
+        "route",
+        "rute",
+        "lokasi",
+        "location",
+        "address",
+        "alamat",
+        "place",
+        "nearby",
+        "distance",
+        "jarak",
+    ),
+}
+_MCP_DOC_POLICY_CACHE: dict[str, str] | None = None
 
 
 def get_servers_config() -> list[ServerConfig]:
@@ -182,6 +252,274 @@ def _append_share_links_if_missing(assistant_text: str, share_urls: list[str]) -
     if current_text.strip():
         return current_text.rstrip() + "\n\n" + links_block
     return links_block
+
+
+def _contains_intent_keyword(text: str, keyword: str) -> bool:
+    if not keyword:
+        return False
+    lowered = text.lower()
+    key = keyword.lower()
+    if " " in key:
+        return key in lowered
+    return re.search(rf"\b{re.escape(key)}\b", lowered) is not None
+
+
+def _infer_requested_servers(text: str) -> set[str]:
+    lowered = (text or "").lower()
+    requested = set()
+    for server_name, keywords in SERVER_INTENT_KEYWORDS.items():
+        if any(_contains_intent_keyword(lowered, keyword) for keyword in keywords):
+            requested.add(server_name)
+
+    if _has_invite_intent(text):
+        requested.update({"calendar", "gmail"})
+
+    return requested
+
+
+def _docs_mcp_servers_dir() -> Path:
+    return Path(__file__).resolve().parents[2] / "docs" / "mcp-servers"
+
+
+def _extract_mcp_doc_policy(server_name: str, body: str) -> str:
+    section = ""
+    purpose = ""
+    tools: list[str] = []
+    notes: list[str] = []
+    note_sections = {
+        "important limitations for calling agents",
+        "constraints",
+        "constraints and limits",
+        "reliability notes for calling agents",
+    }
+
+    for raw_line in body.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        if line.startswith("## "):
+            section = line[3:].strip().lower()
+            continue
+        if section == "purpose" and not purpose:
+            purpose = line
+            continue
+        if section == "tool catalog" and line.startswith("- `"):
+            tools.append(line[3:].split("`", 1)[0])
+            continue
+        if section in note_sections and line.startswith("- "):
+            notes.append(line[2:].strip())
+
+    tool_preview = ", ".join(tools[:12]) if tools else "no tools listed"
+    note_preview = "; ".join(notes[:2]) if notes else "no additional constraints"
+    purpose_text = purpose or "no purpose section"
+    return (
+        f"{server_name}: purpose={purpose_text}; tools={tool_preview}; notes={note_preview}"
+    )
+
+
+def _load_mcp_doc_policy_cache() -> dict[str, str]:
+    global _MCP_DOC_POLICY_CACHE
+    if _MCP_DOC_POLICY_CACHE is not None:
+        return _MCP_DOC_POLICY_CACHE
+
+    docs_dir = _docs_mcp_servers_dir()
+    cache: dict[str, str] = {}
+    for server_name, filename in MCP_DOC_FILENAMES.items():
+        path = docs_dir / filename
+        if not path.exists():
+            continue
+        try:
+            body = path.read_text(encoding="utf-8")
+        except Exception:
+            continue
+        cache[server_name] = _extract_mcp_doc_policy(server_name, body)
+
+    _MCP_DOC_POLICY_CACHE = cache
+    return cache
+
+
+def _build_mcp_policy_context(server_names: set[str]) -> str:
+    if not server_names:
+        return ""
+
+    policies = _load_mcp_doc_policy_cache()
+    lines = []
+    for server_name in sorted(server_names):
+        policy = policies.get(server_name)
+        if policy:
+            lines.append(f"- {policy}")
+    if not lines:
+        return ""
+    return "MCP policy summary (derived from docs/mcp-servers):\n" + "\n".join(lines)
+
+
+def _filter_tooling_for_servers(
+    tool_to_session: dict[str, Any],
+    tool_to_server_name: dict[str, str],
+    mcp_tools: list[dict[str, Any]],
+    gemini_function_declarations: list[Any],
+    server_filter: set[str] | None,
+) -> tuple[dict[str, Any], dict[str, str], list[dict[str, Any]], list[Any]]:
+    if not server_filter:
+        return (
+            tool_to_session,
+            tool_to_server_name,
+            mcp_tools,
+            gemini_function_declarations,
+        )
+
+    allowed_tool_names = {
+        tool_name
+        for tool_name, server_name in tool_to_server_name.items()
+        if server_name in server_filter
+    }
+    filtered_tool_to_session = {
+        tool_name: session
+        for tool_name, session in tool_to_session.items()
+        if tool_name in allowed_tool_names
+    }
+    filtered_tool_to_server_name = {
+        tool_name: server_name
+        for tool_name, server_name in tool_to_server_name.items()
+        if tool_name in allowed_tool_names
+    }
+    filtered_mcp_tools = [
+        tool
+        for tool in mcp_tools
+        if tool.get("function", {}).get("name") in allowed_tool_names
+    ]
+    filtered_gemini_declarations = [
+        declaration
+        for declaration in gemini_function_declarations
+        if getattr(declaration, "name", None) in allowed_tool_names
+    ]
+    return (
+        filtered_tool_to_session,
+        filtered_tool_to_server_name,
+        filtered_mcp_tools,
+        filtered_gemini_declarations,
+    )
+
+
+def _build_unavailable_server_notice(
+    requested_servers: set[str], unavailable_servers: set[str]
+) -> str:
+    if not unavailable_servers:
+        return ""
+    relevant = sorted(requested_servers & unavailable_servers)
+    if not relevant:
+        return ""
+    return (
+        "Warning: MCP server(s) unavailable for this request: "
+        + ", ".join(relevant)
+        + ". Please retry after those servers are healthy."
+    )
+
+
+def _append_unavailable_server_notice(text: str, notice: str) -> str:
+    if not notice:
+        return text
+    if notice in text:
+        return text
+    if text.strip():
+        return text.rstrip() + "\n\n" + notice
+    return notice
+
+
+def _safe_json_loads(value: str) -> Any | None:
+    text = normalize_content_text(value).strip()
+    if not text:
+        return None
+    if not (text.startswith("{") and text.endswith("}")):
+        return None
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        return None
+
+
+def _build_tool_result_contract(
+    tool_name: str,
+    server_name: str,
+    raw_text: str,
+    *,
+    exception: Exception | None = None,
+) -> dict[str, Any]:
+    text = normalize_content_text(raw_text)
+    contract: dict[str, Any] = {
+        "tool_name": tool_name,
+        "server_name": server_name,
+        "success": True,
+        "error_code": None,
+        "error_message": None,
+        "data": {"text": text},
+        "raw_text": text,
+    }
+
+    if exception is not None:
+        contract["success"] = False
+        contract["error_code"] = "tool_exception"
+        contract["error_message"] = str(exception)
+        return contract
+
+    parsed = _safe_json_loads(text)
+    if isinstance(parsed, dict):
+        if isinstance(parsed.get("success"), bool):
+            contract["success"] = parsed["success"]
+        if "data" in parsed:
+            contract["data"] = parsed["data"]
+        elif "result" in parsed:
+            contract["data"] = parsed["result"]
+        error_obj = parsed.get("error")
+        if isinstance(error_obj, dict):
+            error_code = normalize_content_text(error_obj.get("code"))
+            error_message = normalize_content_text(error_obj.get("message"))
+            contract["error_code"] = error_code or None
+            contract["error_message"] = error_message or None
+            if contract["error_message"]:
+                contract["success"] = False
+        if contract["error_message"] is None and parsed.get("error_message"):
+            contract["error_message"] = normalize_content_text(parsed.get("error_message"))
+            contract["success"] = False
+        if not contract["success"] and not contract["error_code"]:
+            contract["error_code"] = "tool_error"
+        return contract
+
+    if _looks_like_error_text(text):
+        contract["success"] = False
+        contract["error_code"] = "tool_error_text"
+        contract["error_message"] = text
+    return contract
+
+
+def _tool_result_for_model(contract: dict[str, Any]) -> dict[str, Any]:
+    data_text = normalize_content_text(contract.get("data"))
+    payload = {
+        "success": bool(contract.get("success")),
+        "error": None,
+        "data": {
+            "text": _truncate_tool_content_for_model(data_text),
+            "urls": _extract_urls(data_text),
+        },
+    }
+    if not contract.get("success"):
+        payload["error"] = {
+            "code": contract.get("error_code"),
+            "message": contract.get("error_message"),
+        }
+    return payload
+
+
+def _extract_urls_from_tool_contract(contract: dict[str, Any]) -> list[str]:
+    urls = []
+    for candidate in (
+        normalize_content_text(contract.get("raw_text")),
+        normalize_content_text(contract.get("data")),
+    ):
+        for url in _extract_urls(candidate):
+            if url not in urls:
+                urls.append(url)
+    return urls
 
 
 def _truncate_tool_content_for_model(text: str, limit: int = MAX_TOOL_CONTENT_CHARS) -> str:
@@ -442,6 +780,7 @@ async def _collect_mcp_tools(stack, servers_config):
     tool_to_server_name = {}
     mcp_tools = []
     gemini_function_declarations = []
+    unavailable_servers = []
 
     for cfg in servers_config:
         try:
@@ -478,8 +817,15 @@ async def _collect_mcp_tools(stack, servers_config):
                     )
         except Exception as exc:
             logger.error("Failed to start MCP server %s: %s", cfg.name, exc)
+            unavailable_servers.append(cfg.name)
 
-    return tool_to_session, tool_to_server_name, mcp_tools, gemini_function_declarations
+    return (
+        tool_to_session,
+        tool_to_server_name,
+        mcp_tools,
+        gemini_function_declarations,
+        unavailable_servers,
+    )
 
 
 async def chat(message, history, model_name):
@@ -495,7 +841,7 @@ async def chat(message, history, model_name):
     validated_history = normalize_history(history)
 
     start_time = time.time()
-    request_id = datetime.now().strftime("%Y%m%d-%H%M%S")
+    request_id = f"{datetime.now():%Y%m%d-%H%M%S}-{uuid4().hex[:8]}"
     invoked_tools = []
     invoked_servers = set()
     status = "success"
@@ -516,16 +862,71 @@ async def chat(message, history, model_name):
         {"role": "user", "content": normalized_message},
         {"role": "assistant", "content": ""},
     ]
+    unavailable_notice = ""
+
+    def _set_response(text: str) -> list[dict[str, Any]]:
+        current_history[-1]["content"] = normalize_content_text(text)
+        return current_history
 
     try:
         async with contextlib.AsyncExitStack() as stack:
+            collected = await _collect_mcp_tools(stack, servers_config)
+            collector_has_unavailable_signal = isinstance(collected, tuple) and len(collected) == 5
+            if isinstance(collected, tuple) and len(collected) == 5:
+                (
+                    tool_to_session,
+                    tool_to_server_name,
+                    mcp_tools,
+                    gemini_function_declarations,
+                    unavailable_servers,
+                ) = collected
+            else:
+                (
+                    tool_to_session,
+                    tool_to_server_name,
+                    mcp_tools,
+                    gemini_function_declarations,
+                ) = collected
+                unavailable_servers = []
+
+            configured_servers = {cfg.name for cfg in servers_config}
+            discovered_servers = set(tool_to_server_name.values())
+            all_unavailable_servers = set(unavailable_servers)
+            if collector_has_unavailable_signal:
+                all_unavailable_servers |= configured_servers - discovered_servers
+
+            requested_servers = _infer_requested_servers(normalized_message)
+            target_servers = (
+                requested_servers & discovered_servers if requested_servers else discovered_servers
+            )
             (
                 tool_to_session,
                 tool_to_server_name,
                 mcp_tools,
                 gemini_function_declarations,
-            ) = await _collect_mcp_tools(stack, servers_config)
+            ) = _filter_tooling_for_servers(
+                tool_to_session=tool_to_session,
+                tool_to_server_name=tool_to_server_name,
+                mcp_tools=mcp_tools,
+                gemini_function_declarations=gemini_function_declarations,
+                server_filter=target_servers if requested_servers else None,
+            )
+
+            unavailable_notice = _build_unavailable_server_notice(
+                requested_servers=requested_servers,
+                unavailable_servers=all_unavailable_servers,
+            )
+            policy_context = _build_mcp_policy_context(
+                target_servers if target_servers else discovered_servers
+            )
             full_response = ""
+
+            def _set_response(text: str) -> list[dict[str, Any]]:
+                current_history[-1]["content"] = _append_unavailable_server_notice(
+                    normalize_content_text(text),
+                    unavailable_notice,
+                )
+                return current_history
 
             async def _maybe_auto_send_invites(current_response: str) -> str:
                 nonlocal auto_invites_attempted, status, error_message
@@ -568,12 +969,24 @@ async def chat(message, history, model_name):
                     )
                     started_at = time.perf_counter()
                     send_content = ""
+                    send_contract: dict[str, Any]
                     try:
                         send_result = await tool_to_session[tool_name].call_tool(tool_name, payload)
                         send_content = _result_to_text(send_result)
+                        send_contract = _build_tool_result_contract(
+                            tool_name,
+                            tool_to_server_name.get(tool_name, "gmail"),
+                            send_content,
+                        )
                     except Exception as tool_exc:
                         send_content = f"Error: Tool '{tool_name}' failed with exception: {tool_exc}"
-                        tool_error = f"{tool_name}: {tool_exc}"
+                        send_contract = _build_tool_result_contract(
+                            tool_name,
+                            tool_to_server_name.get(tool_name, "gmail"),
+                            send_content,
+                            exception=tool_exc,
+                        )
+                        tool_error = f"{tool_name}: {send_contract.get('error_message')}"
                         tool_errors.append(tool_error)
                         status = "error_tool_execution"
                         error_message = tool_error
@@ -594,7 +1007,7 @@ async def chat(message, history, model_name):
                         )
 
                     if (
-                        _looks_like_error_text(send_content)
+                        not send_contract.get("success")
                         and tool_name == "send_calendar_invite_email"
                         and has_plain_email_tool
                     ):
@@ -612,16 +1025,29 @@ async def chat(message, history, model_name):
                             _summarize_for_log(fallback_payload),
                         )
                         started_at = time.perf_counter()
+                        fallback_content = ""
+                        fallback_contract: dict[str, Any]
                         try:
                             fallback_result = await tool_to_session[fallback_tool].call_tool(
                                 fallback_tool, fallback_payload
                             )
                             fallback_content = _result_to_text(fallback_result)
+                            fallback_contract = _build_tool_result_contract(
+                                fallback_tool,
+                                tool_to_server_name.get(fallback_tool, "gmail"),
+                                fallback_content,
+                            )
                         except Exception as tool_exc:
                             fallback_content = (
                                 f"Error: Tool '{fallback_tool}' failed with exception: {tool_exc}"
                             )
-                            tool_error = f"{fallback_tool}: {tool_exc}"
+                            fallback_contract = _build_tool_result_contract(
+                                fallback_tool,
+                                tool_to_server_name.get(fallback_tool, "gmail"),
+                                fallback_content,
+                                exception=tool_exc,
+                            )
+                            tool_error = f"{fallback_tool}: {fallback_contract.get('error_message')}"
                             tool_errors.append(tool_error)
                             status = "error_tool_execution"
                             error_message = tool_error
@@ -640,12 +1066,17 @@ async def chat(message, history, model_name):
                                 fallback_tool,
                                 time.perf_counter() - started_at,
                             )
+                        if fallback_contract.get("success"):
+                            send_contract = fallback_contract
                         send_content = (
                             f"{send_content}\nFallback ({fallback_tool}): {fallback_content}"
                         )
 
-                    if _looks_like_error_text(send_content):
-                        tool_error = f"{tool_name}({to_email}): {send_content}"
+                    if not send_contract.get("success"):
+                        tool_error = (
+                            f"{tool_name}({to_email}): "
+                            f"{send_contract.get('error_message') or send_content}"
+                        )
                         tool_errors.append(tool_error)
                         if error_message is None:
                             error_message = tool_error
@@ -667,6 +1098,25 @@ async def chat(message, history, model_name):
                     return current_response.rstrip() + "\n\n" + block
                 return block
 
+            system_instruction_text = _with_runtime_time_context(SYSTEM_INSTRUCTION)
+            openai_system_instruction_text = _with_runtime_time_context(
+                OPENAI_SYSTEM_INSTRUCTION
+            )
+            if policy_context:
+                system_instruction_text = (
+                    f"{system_instruction_text}\n\n{policy_context}"
+                )
+                openai_system_instruction_text = (
+                    f"{openai_system_instruction_text}\n\n{policy_context}"
+                )
+            if unavailable_notice:
+                system_instruction_text = (
+                    f"{system_instruction_text}\n\n{unavailable_notice}"
+                )
+                openai_system_instruction_text = (
+                    f"{openai_system_instruction_text}\n\n{unavailable_notice}"
+                )
+
             if model_name.startswith("gemini"):
                 if genai is None or genai_types is None:
                     status = "error_missing_gemini_sdk"
@@ -675,16 +1125,14 @@ async def chat(message, history, model_name):
                         "Run `uv sync` or install `google-genai`."
                     )
                     error_message = full_response
-                    current_history[-1]["content"] = full_response
-                    yield current_history
+                    yield _set_response(full_response)
                     return
 
                 if not google_gemini_api_key:
                     status = "error_missing_gemini_key"
                     full_response = "Error: GOOGLE_GEMINI_API_KEY not found in .env"
                     error_message = full_response
-                    current_history[-1]["content"] = full_response
-                    yield current_history
+                    yield _set_response(full_response)
                     return
 
                 gemini_tool_config = (
@@ -693,7 +1141,7 @@ async def chat(message, history, model_name):
                     else None
                 )
                 gemini_config = genai_types.GenerateContentConfig(
-                    system_instruction=_with_runtime_time_context(SYSTEM_INSTRUCTION),
+                    system_instruction=system_instruction_text,
                     tools=gemini_tool_config,
                 )
 
@@ -721,8 +1169,7 @@ async def chat(message, history, model_name):
                                     "Please retry with a more specific request."
                                 )
                                 error_message = full_response
-                                current_history[-1]["content"] = full_response
-                                yield current_history
+                                yield _set_response(full_response)
                                 return
                             response = await _generate_gemini_with_retry(
                                 aclient=aclient,
@@ -739,8 +1186,7 @@ async def chat(message, history, model_name):
                                 full_response = _append_share_links_if_missing(
                                     full_response, share_urls
                                 )
-                                current_history[-1]["content"] = full_response
-                                yield current_history
+                                yield _set_response(full_response)
                                 break
                             if len(function_calls) > max_tool_rounds:
                                 status = "error_tool_round_limit"
@@ -749,8 +1195,7 @@ async def chat(message, history, model_name):
                                     "Please retry with a narrower request."
                                 )
                                 error_message = full_response
-                                current_history[-1]["content"] = full_response
-                                yield current_history
+                                yield _set_response(full_response)
                                 return
 
                             candidates = getattr(response, "candidates", None) or []
@@ -790,19 +1235,33 @@ async def chat(message, history, model_name):
                                     )
                                     error_message = full_response
                                     tool_errors.append(f"{tool_name}: session not found")
-                                    current_history[-1]["content"] = full_response
-                                    yield current_history
+                                    yield _set_response(full_response)
                                     return
 
                                 tool_started_at = time.perf_counter()
+                                tool_contract: dict[str, Any]
                                 try:
                                     result = await session.call_tool(tool_name, tool_args)
                                     tool_content = _result_to_text(result)
+                                    tool_contract = _build_tool_result_contract(
+                                        tool_name,
+                                        server_name,
+                                        tool_content,
+                                    )
                                 except Exception as tool_exc:
                                     tool_content = (
                                         f"Error: Tool '{tool_name}' failed with exception: {tool_exc}"
                                     )
-                                    tool_error = f"{tool_name}: {tool_exc}"
+                                    tool_contract = _build_tool_result_contract(
+                                        tool_name,
+                                        server_name,
+                                        tool_content,
+                                        exception=tool_exc,
+                                    )
+                                    tool_error = (
+                                        f"{tool_name}: "
+                                        f"{tool_contract.get('error_message') or tool_exc}"
+                                    )
                                     tool_errors.append(tool_error)
                                     status = "error_tool_execution"
                                     error_message = tool_error
@@ -821,8 +1280,11 @@ async def chat(message, history, model_name):
                                         tool_name,
                                         time.perf_counter() - tool_started_at,
                                     )
-                                if _looks_like_error_text(tool_content):
-                                    tool_error = f"{tool_name}: {tool_content}"
+                                if not tool_contract.get("success"):
+                                    tool_error = (
+                                        f"{tool_name}: "
+                                        f"{tool_contract.get('error_message') or tool_content}"
+                                    )
                                     tool_errors.append(tool_error)
                                     round_error_count += 1
                                     if error_message is None:
@@ -834,10 +1296,10 @@ async def chat(message, history, model_name):
                                         _summarize_for_log(tool_content),
                                     )
                                 elif tool_name in DRIVE_SHARE_TOOL_NAMES:
-                                    for url in _extract_urls(tool_content):
+                                    for url in _extract_urls_from_tool_contract(tool_contract):
                                         if url not in share_urls:
                                             share_urls.append(url)
-                                if not _looks_like_error_text(tool_content):
+                                if tool_contract.get("success"):
                                     if tool_name == "add_event" and isinstance(tool_args, dict):
                                         last_added_event_args = dict(tool_args)
                                     last_successful_tool_name = tool_name
@@ -851,11 +1313,7 @@ async def chat(message, history, model_name):
                                 tool_response_parts.append(
                                     genai_types.Part.from_function_response(
                                         name=tool_name,
-                                        response={
-                                            "result": _truncate_tool_content_for_model(
-                                                tool_content
-                                            )
-                                        },
+                                        response=_tool_result_for_model(tool_contract),
                                     )
                                 )
 
@@ -871,8 +1329,7 @@ async def chat(message, history, model_name):
                                 )
                                 if not error_message and tool_errors:
                                     error_message = "; ".join(tool_errors[-3:])
-                                current_history[-1]["content"] = full_response
-                                yield current_history
+                                yield _set_response(full_response)
                                 return
 
                             gemini_contents.append(
@@ -898,22 +1355,20 @@ async def chat(message, history, model_name):
                         else:
                             full_response = f"Error: Gemini API error ({code})."
                         error_message = full_response
-                    current_history[-1]["content"] = full_response
-                    yield current_history
+                    yield _set_response(full_response)
                     return
             else:
                 if not api_key:
                     status = "error_missing_api_key"
                     full_response = "Error: API_KEY not found in .env"
                     error_message = full_response
-                    current_history[-1]["content"] = full_response
-                    yield current_history
+                    yield _set_response(full_response)
                     return
 
                 api_messages = [
                     {
                         "role": "system",
-                        "content": _with_runtime_time_context(OPENAI_SYSTEM_INSTRUCTION),
+                        "content": openai_system_instruction_text,
                     }
                 ]
                 api_messages.extend(validated_history)
@@ -954,16 +1409,14 @@ async def chat(message, history, model_name):
                                     "Please retry or narrow the request scope."
                                 )
                             error_message = full_response
-                            current_history[-1]["content"] = full_response
-                            yield current_history
+                            yield _set_response(full_response)
                             return
 
                         if completion_response.status_code != 200:
                             status = "error_http_status"
                             full_response = f"Error: {completion_response.status_code}"
                             error_message = full_response
-                            current_history[-1]["content"] = full_response
-                            yield current_history
+                            yield _set_response(full_response)
                             return
 
                         completion_data = completion_response.json()
@@ -972,8 +1425,7 @@ async def chat(message, history, model_name):
                             status = "error_http_response_shape"
                             full_response = "Error: Invalid response shape from model API."
                             error_message = full_response
-                            current_history[-1]["content"] = full_response
-                            yield current_history
+                            yield _set_response(full_response)
                             return
 
                         assistant_msg = choices[0].get("message", {}) or {}
@@ -984,8 +1436,7 @@ async def chat(message, history, model_name):
                             full_response = _append_share_links_if_missing(
                                 full_response, share_urls
                             )
-                            current_history[-1]["content"] = full_response
-                            yield current_history
+                            yield _set_response(full_response)
                             break
 
                         api_messages.append(assistant_msg)
@@ -1037,14 +1488,29 @@ async def chat(message, history, model_name):
                                 continue
 
                             tool_started_at = time.perf_counter()
+                            tool_contract: dict[str, Any]
                             try:
                                 result = await session.call_tool(tool_name, tool_args)
                                 tool_content = _result_to_text(result)
+                                tool_contract = _build_tool_result_contract(
+                                    tool_name,
+                                    server_name,
+                                    tool_content,
+                                )
                             except Exception as tool_exc:
                                 tool_content = (
                                     f"Error: Tool '{tool_name}' failed with exception: {tool_exc}"
                                 )
-                                tool_error = f"{tool_name}: {tool_exc}"
+                                tool_contract = _build_tool_result_contract(
+                                    tool_name,
+                                    server_name,
+                                    tool_content,
+                                    exception=tool_exc,
+                                )
+                                tool_error = (
+                                    f"{tool_name}: "
+                                    f"{tool_contract.get('error_message') or tool_exc}"
+                                )
                                 tool_errors.append(tool_error)
                                 status = "error_tool_execution"
                                 error_message = tool_error
@@ -1064,8 +1530,11 @@ async def chat(message, history, model_name):
                                     tool_name,
                                     time.perf_counter() - tool_started_at,
                                 )
-                            if _looks_like_error_text(tool_content):
-                                tool_error = f"{tool_name}: {tool_content}"
+                            if not tool_contract.get("success"):
+                                tool_error = (
+                                    f"{tool_name}: "
+                                    f"{tool_contract.get('error_message') or tool_content}"
+                                )
                                 tool_errors.append(tool_error)
                                 if error_message is None:
                                     error_message = tool_error
@@ -1077,10 +1546,10 @@ async def chat(message, history, model_name):
                                     _summarize_for_log(tool_content),
                                 )
                             elif tool_name in DRIVE_SHARE_TOOL_NAMES:
-                                for url in _extract_urls(tool_content):
+                                for url in _extract_urls_from_tool_contract(tool_contract):
                                     if url not in share_urls:
                                         share_urls.append(url)
-                            if not _looks_like_error_text(tool_content):
+                            if tool_contract.get("success"):
                                 if tool_name == "add_event" and isinstance(tool_args, dict):
                                     last_added_event_args = dict(tool_args)
                                 last_successful_tool_name = tool_name
@@ -1096,7 +1565,10 @@ async def chat(message, history, model_name):
                                     "role": "tool",
                                     "tool_call_id": tool_call.get("id", tool_name),
                                     "name": tool_name,
-                                    "content": _truncate_tool_content_for_model(tool_content),
+                                    "content": json.dumps(
+                                        _tool_result_for_model(tool_contract),
+                                        ensure_ascii=False,
+                                    ),
                                 }
                             )
 
@@ -1113,8 +1585,7 @@ async def chat(message, history, model_name):
                             )
                             if not error_message and tool_errors:
                                 error_message = "; ".join(tool_errors[-3:])
-                            current_history[-1]["content"] = full_response
-                            yield current_history
+                            yield _set_response(full_response)
                             return
                     else:
                         status = "error_tool_round_limit"
@@ -1123,15 +1594,13 @@ async def chat(message, history, model_name):
                             "Please retry with a more specific request."
                         )
                         error_message = full_response
-                        current_history[-1]["content"] = full_response
-                        yield current_history
+                        yield _set_response(full_response)
                         return
     except Exception as exc:  # pragma: no cover - defensive fallback
         status = "error_exception"
         error_message = str(exc)
         logger.error("Chat Error: %s", exc, exc_info=True)
-        current_history[-1]["content"] = f"Error: {str(exc)}"
-        yield current_history
+        yield _set_response(f"Error: {str(exc)}")
     finally:
         if status == "success" and tool_errors:
             status = "success_with_tool_errors"
