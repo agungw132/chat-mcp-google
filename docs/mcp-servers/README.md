@@ -8,6 +8,7 @@ These documents are written for a calling/orchestrating agent (for example `chat
 - `docs/mcp-servers/calendar.md`
 - `docs/mcp-servers/contacts.md`
 - `docs/mcp-servers/drive.md`
+- `docs/mcp-servers/docs.md`
 - `docs/mcp-servers/maps.md`
 
 ## How to use this set
@@ -25,6 +26,7 @@ These documents are written for a calling/orchestrating agent (for example `chat
 - Event listing/creation -> `calendar`
 - Contact lookup -> `contacts`
 - File/storage/sharing -> `drive`
+- Document authoring/editing -> `docs`
 - Address/place/directions -> `maps`
 
 Common multi-server patterns:
@@ -35,5 +37,7 @@ Common multi-server patterns:
 - `contacts.search_contacts` -> `gmail.send_email`
 - Share Drive file with user:
 - `drive.search_drive_files` -> `drive.create_drive_shared_link_to_user`
+- Create and refine Google Doc:
+- `docs.create_docs_document` -> `docs.append_docs_text` -> `docs.replace_docs_text`
 - Find place then route:
 - `maps.search_places_text` -> `maps.get_place_details` -> `maps.get_directions`

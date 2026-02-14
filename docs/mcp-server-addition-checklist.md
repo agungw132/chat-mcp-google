@@ -15,6 +15,7 @@ Reference runbook:
 ## B) Auth and Config
 
 - [ ] Decide auth mode (API key, app password, OAuth token, refresh token).
+- [ ] Reuse existing auth/env variables if possible before adding new env keys.
 - [ ] Add required env vars to `.env.template`.
 - [ ] Add short explanation for each new env var in docs.
 - [ ] Provide setup guide in `README.md` (manual steps).
@@ -33,7 +34,9 @@ Reference runbook:
 - [ ] Add server literal to `ServerConfig` (`src/chat_google/models.py`).
 - [ ] Update system instructions in `src/chat_google/constants.py` if needed.
 - [ ] Add intent keywords for tool gating (if needed).
+- [ ] Add doc filename mapping in `MCP_DOC_FILENAMES` (`src/chat_google/chat_service.py`).
 - [ ] Add or update `docs/mcp-servers/<name>.md` for runtime policy injection.
+- [ ] Keep `docs/mcp-servers/<name>.md` section headers parser-friendly (`## Purpose`, `## Tool catalog`).
 
 ## E) Tests
 
@@ -55,6 +58,7 @@ uv run --with pytest --with pytest-asyncio --with-requirements requirements.txt 
 - [ ] Update `docs/pseudocode-chat-app.md` if orchestration changed.
 - [ ] Update `docs/time-complexity-analysis.md` if complexity changed.
 - [ ] Update `CHANGELOG.md` under `[Unreleased]`.
+- [ ] If user-visible server list changes, update UI caption and README architecture/server lists.
 
 ## G) Smoke Validation
 

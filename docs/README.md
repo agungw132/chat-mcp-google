@@ -9,6 +9,7 @@ This folder contains implementation-level pseudocode for the chat application an
 - `docs/pseudocode-mcp-calendar.md`
 - `docs/pseudocode-mcp-contacts.md`
 - `docs/pseudocode-mcp-drive.md`
+- `docs/pseudocode-mcp-docs.md`
 - `docs/pseudocode-mcp-maps.md`
 - `docs/time-complexity-analysis.md`
 - `docs/mcp-server-addition-runbook.md`
@@ -18,6 +19,7 @@ This folder contains implementation-level pseudocode for the chat application an
 - `docs/mcp-servers/calendar.md`
 - `docs/mcp-servers/contacts.md`
 - `docs/mcp-servers/drive.md`
+- `docs/mcp-servers/docs.md`
 - `docs/mcp-servers/maps.md`
 
 ## Scope
@@ -28,7 +30,7 @@ This folder contains implementation-level pseudocode for the chat application an
 - Runtime MCP policy loading from `docs/mcp-servers/*.md` into system instructions
 - Intent-based server/tool gating before model tool-calling
 - Structured tool-result contract (`success/error/data`) passed back to models
-- MCP servers: `gmail`, `calendar`, `contacts`, `drive`, `maps`
+- MCP servers: `gmail`, `calendar`, `contacts`, `drive`, `docs`, `maps`
 - All exposed MCP tools in each server
 - Time complexity analysis + performance improvement proposals
 - Standard operating procedure for adding a new MCP server: `docs/mcp-server-addition-runbook.md`

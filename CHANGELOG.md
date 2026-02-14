@@ -4,13 +4,27 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-02-14
+
 ### Added
 - Added comprehensive agent-oriented MCP READMEs in `docs/mcp-servers/` for:
   - `gmail`
   - `calendar`
   - `contacts`
   - `drive`
+  - `docs`
   - `maps`
+- Added new Google Docs MCP server (phase 1) with tools:
+  - `list_docs_documents`
+  - `search_docs_documents`
+  - `get_docs_document_metadata`
+  - `read_docs_document`
+  - `create_docs_document`
+  - `append_docs_text`
+  - `replace_docs_text`
+- Added root wrapper entrypoint: `docs_server.py`.
+- Added Docs unit and smoke tests.
+- Added Docs pseudocode and agent-oriented documentation.
 
 ### Changed
 - Chat orchestration now derives a compact MCP policy summary from `docs/mcp-servers/*.md` and injects it into model system instructions.
@@ -18,6 +32,9 @@ All notable changes to this project will be documented in this file.
 - Tool execution feedback to models now uses a structured contract (`success`, `error`, `data`) in both Gemini and OpenAI-compatible flows.
 - User responses now include contextual warning when required MCP server(s) are unavailable for the current request.
 - Request ID format now includes UUID suffix for better collision safety in concurrent runs.
+- Integrated Docs MCP into server registry, intent routing keywords, and policy doc mapping.
+- Updated app caption and README architecture/tooling docs to include Docs MCP.
+- Updated onboarding runbook/checklist with parser-compatible MCP doc requirements and auth/env reuse guidance.
 
 ### Quality
 - Expanded chat orchestration tests for:
@@ -25,6 +42,11 @@ All notable changes to this project will be documented in this file.
   - runtime policy injection
   - unavailable-server warning surfacing
   - structured tool-result contract handling
+- Added Docs auth tests for refresh-token flow and missing credential behavior.
+
+### Fixed
+- Improved Docs MCP auth reliability by reloading `.env` at token read time and retrying once after `401` responses.
+- Improved Docs/Drive MCP error hints to explicitly guide OAuth refresh-token setup on `401`.
 
 ## [1.1.2] - 2026-02-14
 

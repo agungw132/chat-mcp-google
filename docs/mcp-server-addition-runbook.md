@@ -33,6 +33,7 @@ Deliverable:
 - API key
 - OAuth access token
 - refresh token flow
+1.5. Check whether the new MCP can reuse existing env/auth variables before introducing new env keys.
 2. Prefer long-lived auth path where possible (refresh token).
 3. Add required env vars to `.env.template` with short per-variable explanation.
 4. Provide both manual and programmatic setup guidance:
@@ -60,7 +61,9 @@ Deliverable:
 2. Ensure server name is allowed in `ServerConfig` (`src/chat_google/models.py`).
 3. Update system instruction guidance in `src/chat_google/constants.py` if new domain behavior matters.
 4. Ensure intent-based tool gating includes the new server keywords.
-5. Ensure `docs/mcp-servers/<name>.md` can be consumed by runtime MCP policy injection.
+5. Ensure `MCP_DOC_FILENAMES` includes the new server doc file in `chat_service`.
+6. Ensure `docs/mcp-servers/<name>.md` can be consumed by runtime MCP policy injection.
+7. Keep `docs/mcp-servers/<name>.md` section headers consistent (`## Purpose`, `## Tool catalog`) so runtime parser can extract policy text.
 
 Deliverable:
 - new tools discoverable and callable by `chat_service`.
@@ -98,6 +101,7 @@ Deliverable:
 - `docs/pseudocode-chat-app.md` if orchestration changed
 - `docs/time-complexity-analysis.md` if complexity profile changed
 - `docs/README.md` file list/scope updates
+2.5. If server is user-visible, update UI/service captions and architecture/server lists in `README.md`.
 3. Keep language professional and consistent with current repo style.
 
 Deliverable:

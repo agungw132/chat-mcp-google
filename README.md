@@ -7,11 +7,12 @@
 ![Validation: Pydantic](https://img.shields.io/badge/validation-Pydantic-E92063)
 ![Tests: pytest](https://img.shields.io/badge/tests-pytest-22c55e)
 
-A production-oriented Gradio chat application that integrates LLM tool-calling with five Google-focused MCP servers:
+A production-oriented Gradio chat application that integrates LLM tool-calling with six Google-focused MCP servers:
 - Gmail (IMAP/SMTP)
 - Google Calendar (CalDAV)
 - Google Contacts (CardDAV)
 - Google Drive (Drive REST API)
+- Google Docs (Docs REST API + Drive metadata)
 - Google Maps (Maps/Places/Geocoding/Directions APIs)
 
 The application supports two model backends:
@@ -43,7 +44,7 @@ Current Gemini models:
 - Intent-based MCP tool gating (only relevant server tools are sent to the model per request).
 - Runtime MCP policy injection from `docs/mcp-servers/*.md` into system instructions.
 - Multi-round tool-call orchestration for OpenAI-compatible models (tool -> tool -> final answer).
-- Integrated Gmail, Calendar, Contacts, Drive, and Maps actions.
+- Integrated Gmail, Calendar, Contacts, Drive, Docs, and Maps actions.
 - Auto-invite flow: when prompt includes `invite` + email and event is created, app sends invitation via Gmail MCP.
 - Calendar invitation delivery supports `.ics` (`text/calendar`) accept/reject flow.
 - Drive phase 1.1 includes folder creation, text upload, move, user sharing, and public link creation.
@@ -93,12 +94,14 @@ flowchart TD
     TOOL --> MC[calendar_server.py]
     TOOL --> MT[contacts_server.py]
     TOOL --> MD[drive_server.py]
+    TOOL --> MDO[docs_server.py]
     TOOL --> MM[maps_server.py]
 
     MG --> GI[Gmail IMAP/SMTP]
     MC --> GC[Google Calendar CalDAV]
     MT --> GCT[Google Contacts CardDAV]
     MD --> GD[Google Drive REST API]
+    MDO --> GDO[Google Docs API]
     MM --> GM[Google Maps APIs]
 
     ROUTE --> LLM
@@ -117,6 +120,7 @@ flowchart TD
 - `calendar_server.py`: Calendar MCP wrapper entrypoint.
 - `contacts_server.py`: Contacts MCP wrapper entrypoint.
 - `drive_server.py`: Drive MCP wrapper entrypoint.
+- `docs_server.py`: Docs MCP wrapper entrypoint.
 - `maps_server.py`: Maps MCP wrapper entrypoint.
 - `src/chat_google/chat_service.py`: main orchestration logic.
 - `src/chat_google/ui.py`: Gradio UI composition and event wiring.
@@ -138,6 +142,7 @@ flowchart TD
   - 2-Step Verification enabled
   - App Password enabled and generated
 - Google Cloud project with Drive API enabled (for `GOOGLE_DRIVE_ACCESS_TOKEN`)
+- Google Cloud project with Google Docs API enabled (for Docs MCP tools)
 - OAuth client credentials (`Desktop app`) for Drive auto-refresh flow
   - `GOOGLE_OAUTH_CLIENT_ID`
   - `GOOGLE_OAUTH_CLIENT_SECRET`
@@ -170,8 +175,8 @@ MODEL=azure_ai/kimi-k2.5
 Variable reference:
 - `GOOGLE_ACCOUNT`: Google account used by Gmail/Calendar/Contacts MCP servers.
 - `GOOGLE_APP_KEY`: Google App Password (16 characters, no spaces).
-- `GOOGLE_DRIVE_ACCESS_TOKEN`: OAuth 2.0 Bearer token for Drive MCP (not App Password).
-- `GOOGLE_DRIVE_REFRESH_TOKEN`: optional refresh token for automatic Drive token renewal.
+- `GOOGLE_DRIVE_ACCESS_TOKEN`: OAuth 2.0 Bearer token for Drive/Docs MCP (not App Password).
+- `GOOGLE_DRIVE_REFRESH_TOKEN`: optional refresh token for automatic Drive/Docs token renewal.
 - `GOOGLE_OAUTH_CLIENT_ID`: OAuth client ID paired with `GOOGLE_DRIVE_REFRESH_TOKEN`.
 - `GOOGLE_OAUTH_CLIENT_SECRET`: OAuth client secret paired with `GOOGLE_DRIVE_REFRESH_TOKEN`.
 - `GOOGLE_MAPS_API_KEY`: Google Maps API key for Maps MCP tools.
@@ -238,6 +243,12 @@ uv run --with google-auth-oauthlib python get_google_drive_access_token.py --cli
 
 Default scope in this script is full Drive access:
 - `https://www.googleapis.com/auth/drive`
+
+## Google Docs API Setup Notes
+
+- Enable `Google Docs API` in the same GCP project as your OAuth credentials.
+- Existing token flow in `get_google_drive_access_token.py` (scope `https://www.googleapis.com/auth/drive`) is compatible with Docs MCP in this repository.
+- Docs MCP and Drive MCP share the same token environment variables.
 
 ## How to Get `GOOGLE_OAUTH_CLIENT_ID` and `GOOGLE_OAUTH_CLIENT_SECRET`
 
@@ -346,6 +357,7 @@ uv run python gmail_server.py
 uv run python calendar_server.py
 uv run python contacts_server.py
 uv run python drive_server.py
+uv run python docs_server.py
 uv run python maps_server.py
 ```
 
@@ -388,6 +400,15 @@ Note:
 - `move_drive_file(file_id, new_parent_id)` (works for files/folders)
 - `create_drive_shared_link_to_user(item_id, user_email, role='reader', send_notification=True, message='', expires_in_days=7)`
 - `create_drive_public_link(item_id, role='reader', allow_discovery=False)` (file/folder)
+
+### Docs (Phase 1)
+- `list_docs_documents(limit=10)`
+- `search_docs_documents(query, limit=10)`
+- `get_docs_document_metadata(document_id)`
+- `read_docs_document(document_id, max_chars=8000)`
+- `create_docs_document(title, initial_content='')`
+- `append_docs_text(document_id, text)`
+- `replace_docs_text(document_id, find_text, replace_text='', match_case=False)`
 
 ### Maps
 - `search_places_text(query, limit=5, language='en', region=None)`
@@ -480,7 +501,12 @@ Notes:
 - Remember: `GOOGLE_APP_KEY` cannot be used for Drive API.
 - If write/share/public-link tools fail with 403, re-generate token with full Drive scope.
 
-8. Response includes warning about unavailable MCP server
+8. Google Docs tools fail with 401/403
+- Ensure Google Docs API is enabled in your Google Cloud project.
+- Ensure token includes Docs/Drive access (existing Drive full scope is compatible).
+- Ensure the authenticated account has access to the target document.
+
+9. Response includes warning about unavailable MCP server
 - This appears when your request domain needs a server that failed to initialize.
 - Check `chat_app.log` lines containing `Failed to start MCP server`.
 - Start the affected server manually (`uv run python <server>_server.py`) and retry.

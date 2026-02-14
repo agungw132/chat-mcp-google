@@ -74,6 +74,7 @@ MCP_DOC_FILENAMES = {
     "calendar": "calendar.md",
     "contacts": "contacts.md",
     "drive": "drive.md",
+    "docs": "docs.md",
     "maps": "maps.md",
 }
 SERVER_INTENT_KEYWORDS = {
@@ -120,6 +121,16 @@ SERVER_INTENT_KEYWORDS = {
         "shared link",
         "permission",
     ),
+    "docs": (
+        "docs",
+        "google docs",
+        "document",
+        "gdoc",
+        "write doc",
+        "create doc",
+        "append text",
+        "replace text",
+    ),
     "maps": (
         "maps",
         "google maps",
@@ -145,6 +156,7 @@ def get_servers_config() -> list[ServerConfig]:
         ServerConfig(name="calendar", script="calendar_server.py"),
         ServerConfig(name="contacts", script="contacts_server.py"),
         ServerConfig(name="drive", script="drive_server.py"),
+        ServerConfig(name="docs", script="docs_server.py"),
         ServerConfig(name="maps", script="maps_server.py"),
     ]
 

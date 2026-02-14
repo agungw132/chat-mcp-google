@@ -109,7 +109,7 @@ MetricsRecord:
 ```text
 1. Normalize user/history payloads
 2. Load runtime config from .env
-3. Start MCP stdio sessions (gmail/calendar/contacts/drive/maps)
+3. Start MCP stdio sessions (gmail/calendar/contacts/drive/docs/maps)
 4. Build tool schemas for selected model family (Gemini vs OpenAI-compatible)
 5. Infer request intent and filter tools to relevant MCP server domains
 6. Inject MCP policy summary from `docs/mcp-servers/*.md` into system prompts
@@ -134,6 +134,7 @@ RETURN list:
     ("calendar", "calendar_server.py")
     ("contacts", "contacts_server.py")
     ("drive", "drive_server.py")
+    ("docs", "docs_server.py")
     ("maps", "maps_server.py")
 ```
 
@@ -444,6 +445,7 @@ Files:
 - `calendar_server.py`
 - `contacts_server.py`
 - `drive_server.py`
+- `docs_server.py`
 - `maps_server.py`
 
 Pattern:

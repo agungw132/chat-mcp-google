@@ -7,17 +7,18 @@ This analysis is based on:
 - `docs/pseudocode-mcp-calendar.md`
 - `docs/pseudocode-mcp-contacts.md`
 - `docs/pseudocode-mcp-drive.md`
+- `docs/pseudocode-mcp-docs.md`
 - `docs/pseudocode-mcp-maps.md`
 
 ## 1) Notation
 
 - `H`: number of chat history messages
 - `X`: total normalized text size across `history + user message`
-- `S`: number of MCP servers (currently 5)
+- `S`: number of MCP servers (currently 6)
 - `T`: total number of discovered MCP tools (across all servers)
 - `R`: number of tool-calling rounds in one model request
 - `C`: total tool calls in one request
-- `N`: number of items returned by an external provider (emails/events/files/contacts/places/routes)
+- `N`: number of items returned by an external provider (emails/events/files/documents/contacts/places/routes)
 - `L`: user-requested list limit (typically <= 100)
 - `F`: number of CardDAV contact links
 - `B`: contacts fetch batch size (`FETCH_BATCH_SIZE`, currently 20)
@@ -161,9 +162,31 @@ Largest recurring overhead is repeated MCP session bootstrap (`uv run python <se
 
 - Reading large text files fully before truncation can waste bandwidth/time.
 
-## 7) Maps MCP Complexity
+## 7) Docs MCP Complexity
 
 ## 7.1 Tool complexity summary
+
+- `list_docs_documents(limit=L)`: `O(L)` formatting on Drive list results.
+- `search_docs_documents(limit=L)`: `O(L)` formatting on search results.
+- `get_docs_document_metadata(document_id)`:
+- Docs fetch `O(1)` + Drive metadata fetch `O(1)`.
+- `read_docs_document(document_id, max_chars)`:
+- Docs fetch + body traversal `O(N)` on document structural elements, truncation bounded by `max_chars`.
+- `create_docs_document(title, initial_content)`:
+- create call `O(1)` + optional initial insert `O(|initial_content|)`.
+- `append_docs_text(document_id, text)`:
+- read structure `O(N)` to find append index + batch update `O(|text|)`.
+- `replace_docs_text(document_id, find_text, replace_text)`:
+- single batch update request, practical complexity dominated by Docs backend processing.
+
+## 7.2 Bottleneck notes
+
+- Large documents increase `read_docs_document` traversal cost.
+- Repeated write operations in separate tool calls (create -> append -> replace) add network round trips.
+
+## 8) Maps MCP Complexity
+
+## 8.1 Tool complexity summary
 
 - `search_places_text(limit=L)`: `O(L)` formatting on returned place results.
 - `geocode_address(limit=L)`: `O(L)` formatting on geocode candidates.
@@ -173,14 +196,14 @@ Largest recurring overhead is repeated MCP session bootstrap (`uv run python <se
 - route scan `O(Routes * Legs)` with small practical caps (`<=3` routes when alternatives enabled).
 - each leg contributes constant-time aggregation for distance/duration.
 
-## 7.2 Bottleneck notes
+## 8.2 Bottleneck notes
 
 - Directions complexity depends on number of returned route legs; inter-city routes with many legs increase parsing work.
 - Most latency is external API/network, not local CPU.
 
-## 8) End-to-End Hotspots (Priority Order)
+## 9) End-to-End Hotspots (Priority Order)
 
-## 8.1 P0 (Implemented) - Intent-based tool gating + MCP policy injection
+## 9.1 P0 (Implemented) - Intent-based tool gating + MCP policy injection
 
 - Implemented:
 - infer requested server domains from prompt text
@@ -191,7 +214,7 @@ Largest recurring overhead is repeated MCP session bootstrap (`uv run python <se
 - typically reduces LLM tool-schema payload size from `T` to `T'`
 - Expected impact: lower prompt/tool-selection noise, lower model latency, and better tool precision.
 
-## 8.2 P1 - Reuse MCP sessions across chat requests
+## 9.2 P1 - Reuse MCP sessions across chat requests
 
 Current behavior starts and initializes all servers for every request.
 
@@ -201,7 +224,7 @@ Current behavior starts and initializes all servers for every request.
 - Reconnect only on failure.
 - Expected impact: significant latency reduction per chat turn.
 
-## 8.3 P1 - Optimize Contacts `search_contacts` fallback path
+## 9.3 P1 - Optimize Contacts `search_contacts` fallback path
 
 - Current worst case `O(F)` with many GET calls even when only top 1-5 matches needed.
 - Improvement options:
@@ -210,7 +233,7 @@ Current behavior starts and initializes all servers for every request.
 - Stop fetching as soon as enough high-confidence matches found.
 - Expected impact: major reduction for large address books.
 
-## 8.4 P1 - Parallelize independent tool calls in a round
+## 9.4 P1 - Parallelize independent tool calls in a round
 
 - Current execution is sequential per tool call.
 - Improvement:
@@ -220,7 +243,7 @@ Current behavior starts and initializes all servers for every request.
 - session/client thread-safety is guaranteed (or separated by server/session).
 - Expected impact: lower round latency when model emits multiple independent calls.
 
-## 8.5 P2 - Cap context growth in multi-round orchestration
+## 9.5 P2 - Cap context growth in multi-round orchestration
 
 - Repeatedly appending tool outputs can increase request payload size across rounds.
 - Improvement:
@@ -228,14 +251,14 @@ Current behavior starts and initializes all servers for every request.
 - Keep only latest relevant turns + structured memory summary.
 - Expected impact: reduced model latency/cost and lower timeout probability.
 
-## 8.6 P2 - Stream/truncate Drive file reads earlier
+## 9.6 P2 - Stream/truncate Drive file reads earlier
 
 - `read_drive_text_file` downloads full content before truncation.
 - Improvement:
 - Use ranged reads/streaming and stop after `max_chars` threshold when feasible.
 - Expected impact: better performance on large files.
 
-## 8.7 P2 - Reduce unnecessary sorting in Calendar lists
+## 9.7 P2 - Reduce unnecessary sorting in Calendar lists
 
 - `sorted(results)` introduces `O(N log N)`.
 - Improvement:
@@ -243,7 +266,7 @@ Current behavior starts and initializes all servers for every request.
 - or request sorted order upstream.
 - Expected impact: moderate CPU savings for larger event sets.
 
-## 8.8 P3 - Batch IMAP fetch patterns in Gmail tools
+## 9.8 P3 - Batch IMAP fetch patterns in Gmail tools
 
 - Several tools fetch message headers one-by-one.
 - Improvement:
@@ -251,7 +274,7 @@ Current behavior starts and initializes all servers for every request.
 - Minimize repeated mailbox select calls.
 - Expected impact: moderate latency reduction for larger `count` values.
 
-## 8.9 P3 - Add response caching for frequent Maps lookups
+## 9.9 P3 - Add response caching for frequent Maps lookups
 
 - Repeated geocode/place details for the same query can trigger duplicate API calls.
 - Improvement:
@@ -263,7 +286,7 @@ Current behavior starts and initializes all servers for every request.
 - `get_directions`: (`origin`,`destination`,`mode`,`alternatives`,`units`)
 - Expected impact: lower cost and faster responses on repeated lookups.
 
-## 9) Suggested Implementation Roadmap
+## 10) Suggested Implementation Roadmap
 
 ## Phase A (highest ROI)
 
@@ -283,7 +306,7 @@ Current behavior starts and initializes all servers for every request.
 1. Gmail fetch batching refinements.
 2. Additional perf telemetry (per-step timing, cache hit rate, queue depth).
 
-## 10) Optional Metrics to Track After Improvements
+## 11) Optional Metrics to Track After Improvements
 
 - `mcp_session_init_ms` and session reuse ratio
 - `tool_round_count` and `tool_call_count`

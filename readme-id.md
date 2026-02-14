@@ -12,6 +12,7 @@ Chat app berbasis Gradio yang terhubung ke MCP server:
 - Google Calendar
 - Google Contacts
 - Google Drive
+- Google Docs
 - Google Maps
 
 Mendukung:
@@ -68,3 +69,4 @@ Untuk daftar tools, arsitektur, troubleshooting, dan changelog terbaru, lihat:
 - `README.md`
 - `CHANGELOG.md`
 - `docs/mcp-servers/README.md` (panduan per MCP untuk calling agent)
+- `docs/mcp-servers/docs.md` (panduan MCP Google Docs)

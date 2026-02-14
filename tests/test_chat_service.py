@@ -20,12 +20,14 @@ async def test_chat_empty_message():
     assert outputs == [[{"role": "user", "content": "x"}]]
 
 
-def test_get_servers_config_includes_drive_and_maps():
+def test_get_servers_config_includes_drive_docs_and_maps():
     names = [cfg.name for cfg in chat_service.get_servers_config()]
     scripts = [cfg.script for cfg in chat_service.get_servers_config()]
     assert "drive" in names
+    assert "docs" in names
     assert "maps" in names
     assert "drive_server.py" in scripts
+    assert "docs_server.py" in scripts
     assert "maps_server.py" in scripts
 
 
@@ -1130,6 +1132,13 @@ def test_infer_requested_servers_invite_and_maps():
     assert "calendar" in servers
     assert "gmail" in servers
     assert "maps" in servers
+
+
+def test_infer_requested_servers_docs_keywords():
+    servers = chat_service._infer_requested_servers(
+        "create doc about weekly plan and append text section"
+    )
+    assert "docs" in servers
 
 
 def test_build_tool_result_contract_prefers_structured_error():
