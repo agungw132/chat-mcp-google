@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 import httpx
 from dotenv import load_dotenv
 from mcp.server.fastmcp import FastMCP
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 load_dotenv()
 mcp = FastMCP("GoogleDocs")
@@ -15,6 +15,13 @@ GOOGLE_OAUTH_TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token"
 HTTP_TIMEOUT = httpx.Timeout(timeout=20.0, connect=5.0)
 GOOGLE_DOC_MIME = "application/vnd.google-apps.document"
 TOKEN_EXPIRY_SAFETY_MARGIN_SECONDS = 60
+DOC_SHARE_ROLES = {"reader", "commenter", "writer"}
+DOC_EXPORT_FORMATS = {
+    "txt": "text/plain",
+    "html": "text/html",
+    "pdf": "application/pdf",
+    "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+}
 
 _CACHED_ACCESS_TOKEN: str | None = None
 _CACHED_ACCESS_TOKEN_EXPIRES_AT: datetime | None = None
@@ -62,6 +69,56 @@ class _ReplaceTextInput(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=False)
 
     document_id: str = Field(min_length=1)
+    find_text: str = Field(min_length=1)
+    replace_text: str = Field(default="")
+    match_case: bool = False
+
+
+class _ShareDocsToUserInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    document_id: str = Field(min_length=1)
+    user_email: str = Field(min_length=3, pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+    role: str = Field(default="reader")
+    send_notification: bool = True
+    message: str = Field(default="")
+
+
+class _ExportDocsInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    document_id: str = Field(min_length=1)
+    export_format: str = Field(default="pdf")
+    max_chars: int = Field(default=8000, ge=200, le=50000, strict=True)
+
+
+class _AppendStructuredContentInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=False)
+
+    document_id: str = Field(min_length=1)
+    heading: str = Field(default="")
+    paragraph: str = Field(default="")
+    bullet_items: list[str] = Field(default_factory=list, max_length=100)
+    numbered_items: list[str] = Field(default_factory=list, max_length=100)
+
+    @model_validator(mode="after")
+    def validate_non_empty_content(self):
+        has_heading = bool(self.heading.strip())
+        has_paragraph = bool(self.paragraph.strip())
+        has_bullets = any(str(item).strip() for item in self.bullet_items)
+        has_numbered = any(str(item).strip() for item in self.numbered_items)
+        if not (has_heading or has_paragraph or has_bullets or has_numbered):
+            raise ValueError(
+                "Provide at least one of: heading, paragraph, bullet_items, numbered_items."
+            )
+        return self
+
+
+class _ReplaceTextIfRevisionInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=False)
+
+    document_id: str = Field(min_length=1)
+    expected_revision_id: str = Field(min_length=1)
     find_text: str = Field(min_length=1)
     replace_text: str = Field(default="")
     match_case: bool = False
@@ -288,6 +345,52 @@ def _document_insert_index(document: dict) -> int:
     return max(1, end_index - 1)
 
 
+def _normalize_share_role(role: str) -> tuple[str | None, str | None]:
+    lowered = role.lower().strip()
+    if lowered not in DOC_SHARE_ROLES:
+        return None, f"Invalid role '{role}'. Allowed roles: {', '.join(sorted(DOC_SHARE_ROLES))}"
+    return lowered, None
+
+
+def _normalize_export_format(export_format: str) -> tuple[str | None, str | None]:
+    normalized = export_format.lower().strip()
+    mime_type = DOC_EXPORT_FORMATS.get(normalized)
+    if not mime_type:
+        return None, (
+            f"Invalid export_format '{export_format}'. "
+            f"Allowed: {', '.join(sorted(DOC_EXPORT_FORMATS))}"
+        )
+    return mime_type, None
+
+
+def _build_structured_append_text(params: _AppendStructuredContentInput) -> str:
+    lines: list[str] = []
+    heading = params.heading.strip()
+    if heading:
+        lines.append(heading)
+        lines.append("")
+
+    paragraph = params.paragraph.strip()
+    if paragraph:
+        lines.append(paragraph)
+        lines.append("")
+
+    bullet_lines = [str(item).strip() for item in params.bullet_items if str(item).strip()]
+    for item in bullet_lines:
+        lines.append(f"- {item}")
+    if bullet_lines:
+        lines.append("")
+
+    numbered_lines = [str(item).strip() for item in params.numbered_items if str(item).strip()]
+    for idx, item in enumerate(numbered_lines, start=1):
+        lines.append(f"{idx}. {item}")
+
+    text = "\n".join(lines).rstrip()
+    if not text:
+        return ""
+    return "\n\n" + text
+
+
 async def _docs_get(path: str) -> tuple[dict | None, str | None]:
     token = _get_access_token()
     url = f"{DOCS_API_BASE}{path}"
@@ -340,6 +443,48 @@ async def _drive_get(path: str, params: dict | None = None) -> tuple[dict | None
         return response.json(), None
     except Exception as exc:
         return None, f"Drive API response parse error: {str(exc)}"
+
+
+async def _drive_post_json(
+    path: str,
+    params: dict | None = None,
+    json_body: dict | None = None,
+) -> tuple[dict | None, str | None]:
+    token = _get_access_token()
+    url = f"{DRIVE_API_BASE}{path}"
+    async with httpx.AsyncClient(**_client_kwargs()) as client:
+        response = await client.post(url, headers=_auth_headers(token), params=params, json=json_body)
+        if response.status_code == 401:
+            _invalidate_cached_access_token()
+            retry_token = _get_access_token()
+            if retry_token:
+                response = await client.post(
+                    url,
+                    headers=_auth_headers(retry_token),
+                    params=params,
+                    json=json_body,
+                )
+    if response.status_code not in (200, 201):
+        return None, _format_drive_error(response)
+    try:
+        return response.json(), None
+    except Exception:
+        return {}, None
+
+
+async def _drive_get_bytes(path: str, params: dict | None = None) -> tuple[bytes | None, str | None]:
+    token = _get_access_token()
+    url = f"{DRIVE_API_BASE}{path}"
+    async with httpx.AsyncClient(**_client_kwargs()) as client:
+        response = await client.get(url, headers=_auth_headers(token), params=params)
+        if response.status_code == 401:
+            _invalidate_cached_access_token()
+            retry_token = _get_access_token()
+            if retry_token:
+                response = await client.get(url, headers=_auth_headers(retry_token), params=params)
+    if response.status_code != 200:
+        return None, _format_drive_error(response)
+    return response.content, None
 
 
 def _format_doc_line(item: dict) -> str:
@@ -618,6 +763,272 @@ async def replace_docs_text(
         )
     except Exception as exc:
         return f"Error replacing text in Google Docs document: {str(exc)}"
+
+
+@mcp.tool()
+async def share_docs_to_user(
+    document_id: str,
+    user_email: str,
+    role: str = "reader",
+    send_notification: bool = True,
+    message: str = "",
+) -> str:
+    """Shares a Google Docs document to a specific user using Drive permissions."""
+    try:
+        params = _ShareDocsToUserInput.model_validate(
+            {
+                "document_id": document_id,
+                "user_email": user_email,
+                "role": role,
+                "send_notification": send_notification,
+                "message": message,
+            }
+        )
+        normalized_role, role_err = _normalize_share_role(params.role)
+        if role_err:
+            return role_err
+
+        query_params: dict[str, str] = {
+            "supportsAllDrives": "true",
+            "sendNotificationEmail": "true" if params.send_notification else "false",
+        }
+        note = params.message.strip()
+        if params.send_notification and note:
+            query_params["emailMessage"] = note
+
+        perm_resp, perm_err = await _drive_post_json(
+            f"/files/{params.document_id}/permissions",
+            params=query_params,
+            json_body={
+                "type": "user",
+                "role": normalized_role,
+                "emailAddress": params.user_email,
+            },
+        )
+        if perm_err:
+            return perm_err
+
+        meta, meta_err = await _drive_get(
+            f"/files/{params.document_id}",
+            params={
+                "fields": "id,name,webViewLink",
+                "supportsAllDrives": "true",
+            },
+        )
+        if meta_err:
+            return (
+                "Document shared, but failed to fetch metadata.\n"
+                f"Permission ID: {(perm_resp or {}).get('id', '-')}\n"
+                f"Error: {meta_err}"
+            )
+
+        return (
+            "Google Docs sharing completed:\n"
+            f"Document ID: {params.document_id}\n"
+            f"Document Name: {(meta or {}).get('name', '-')}\n"
+            f"Shared To: {params.user_email}\n"
+            f"Role: {normalized_role}\n"
+            f"Notification Sent: {params.send_notification}\n"
+            f"Permission ID: {(perm_resp or {}).get('id', '-')}\n"
+            f"Link: {(meta or {}).get('webViewLink', '-')}"
+        )
+    except Exception as exc:
+        return f"Error sharing Google Docs document: {str(exc)}"
+
+
+@mcp.tool()
+async def export_docs_document(
+    document_id: str,
+    export_format: str = "pdf",
+    max_chars: int = 8000,
+) -> str:
+    """Exports a Google Docs document to txt/html/pdf/docx."""
+    try:
+        params = _ExportDocsInput.model_validate(
+            {
+                "document_id": document_id,
+                "export_format": export_format,
+                "max_chars": max_chars,
+            }
+        )
+        mime_type, format_err = _normalize_export_format(params.export_format)
+        if format_err:
+            return format_err
+
+        payload, export_err = await _drive_get_bytes(
+            f"/files/{params.document_id}/export",
+            params={"mimeType": mime_type},
+        )
+        if export_err:
+            return export_err
+        if payload is None:
+            return "Failed to export Google Docs document."
+
+        meta, meta_err = await _drive_get(
+            f"/files/{params.document_id}",
+            params={
+                "fields": "id,name,webViewLink",
+                "supportsAllDrives": "true",
+            },
+        )
+        if meta_err:
+            meta = {"name": "-", "webViewLink": "-"}
+
+        size_bytes = len(payload)
+        normalized_format = params.export_format.lower().strip()
+        if normalized_format in {"txt", "html"}:
+            text = payload.decode("utf-8", errors="replace")
+            if len(text) > params.max_chars:
+                text = text[: params.max_chars].rstrip() + "\n\n[Truncated]"
+            return (
+                "Google Docs export completed:\n"
+                f"Document ID: {params.document_id}\n"
+                f"Document Name: {(meta or {}).get('name', '-')}\n"
+                f"Format: {normalized_format}\n"
+                f"Size Bytes: {size_bytes}\n"
+                f"Link: {(meta or {}).get('webViewLink', '-')}\n\n"
+                f"{text}"
+            )
+
+        return (
+            "Google Docs export completed:\n"
+            f"Document ID: {params.document_id}\n"
+            f"Document Name: {(meta or {}).get('name', '-')}\n"
+            f"Format: {normalized_format}\n"
+            f"MIME Type: {mime_type}\n"
+            f"Size Bytes: {size_bytes}\n"
+            f"Link: {(meta or {}).get('webViewLink', '-')}\n"
+            "Binary export generated successfully (content not printed in chat)."
+        )
+    except Exception as exc:
+        return f"Error exporting Google Docs document: {str(exc)}"
+
+
+@mcp.tool()
+async def append_docs_structured_content(
+    document_id: str,
+    heading: str = "",
+    paragraph: str = "",
+    bullet_items: list[str] | None = None,
+    numbered_items: list[str] | None = None,
+) -> str:
+    """Appends heading/paragraph/bullets/numbered items as a structured block."""
+    try:
+        params = _AppendStructuredContentInput.model_validate(
+            {
+                "document_id": document_id,
+                "heading": heading,
+                "paragraph": paragraph,
+                "bullet_items": bullet_items or [],
+                "numbered_items": numbered_items or [],
+            }
+        )
+        doc_data, err = await _docs_get(f"/documents/{params.document_id}")
+        if err:
+            return err
+        text = _build_structured_append_text(params)
+        if not text:
+            return "Nothing to append."
+
+        index = _document_insert_index(doc_data)
+        _, update_err = await _docs_post(
+            f"/documents/{params.document_id}:batchUpdate",
+            json_body={
+                "requests": [
+                    {
+                        "insertText": {
+                            "location": {"index": index},
+                            "text": text,
+                        }
+                    }
+                ]
+            },
+        )
+        if update_err:
+            return update_err
+
+        link = f"https://docs.google.com/document/d/{params.document_id}/edit"
+        return (
+            "Structured content appended to Google Docs document:\n"
+            f"Document ID: {params.document_id}\n"
+            f"Inserted At Index: {index}\n"
+            f"Characters Added: {len(text)}\n"
+            f"Link: {link}"
+        )
+    except Exception as exc:
+        return f"Error appending structured content to Google Docs document: {str(exc)}"
+
+
+@mcp.tool()
+async def replace_docs_text_if_revision(
+    document_id: str,
+    expected_revision_id: str,
+    find_text: str,
+    replace_text: str = "",
+    match_case: bool = False,
+) -> str:
+    """Replaces text only when current document revision matches expected_revision_id."""
+    try:
+        params = _ReplaceTextIfRevisionInput.model_validate(
+            {
+                "document_id": document_id,
+                "expected_revision_id": expected_revision_id,
+                "find_text": find_text,
+                "replace_text": replace_text,
+                "match_case": match_case,
+            }
+        )
+        doc_data, doc_err = await _docs_get(f"/documents/{params.document_id}")
+        if doc_err:
+            return doc_err
+        current_revision_id = str(doc_data.get("revisionId", "")).strip()
+        if current_revision_id != params.expected_revision_id:
+            return (
+                "Revision mismatch. No changes applied.\n"
+                f"Document ID: {params.document_id}\n"
+                f"Expected Revision ID: {params.expected_revision_id}\n"
+                f"Current Revision ID: {current_revision_id or '-'}"
+            )
+
+        data, err = await _docs_post(
+            f"/documents/{params.document_id}:batchUpdate",
+            json_body={
+                "requests": [
+                    {
+                        "replaceAllText": {
+                            "containsText": {
+                                "text": params.find_text,
+                                "matchCase": params.match_case,
+                            },
+                            "replaceText": params.replace_text,
+                        }
+                    }
+                ]
+            },
+        )
+        if err:
+            return err
+        replies = data.get("replies", []) if data else []
+        occurrences = 0
+        if replies:
+            first = replies[0]
+            if isinstance(first, dict):
+                replace_resp = first.get("replaceAllText", {})
+                if isinstance(replace_resp, dict):
+                    occurrences = int(replace_resp.get("occurrencesChanged", 0))
+
+        link = f"https://docs.google.com/document/d/{params.document_id}/edit"
+        return (
+            "Safe text replacement completed in Google Docs document:\n"
+            f"Document ID: {params.document_id}\n"
+            f"Revision ID: {current_revision_id or '-'}\n"
+            f"Find Text: {params.find_text}\n"
+            f"Replace Text: {params.replace_text}\n"
+            f"Occurrences Changed: {occurrences}\n"
+            f"Link: {link}"
+        )
+    except Exception as exc:
+        return f"Error replacing text with revision check in Google Docs document: {str(exc)}"
 
 
 def run() -> None:

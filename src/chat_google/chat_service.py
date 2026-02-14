@@ -130,6 +130,12 @@ SERVER_INTENT_KEYWORDS = {
         "create doc",
         "append text",
         "replace text",
+        "share doc",
+        "share document",
+        "export doc",
+        "export document",
+        "docx",
+        "revision",
     ),
     "maps": (
         "maps",

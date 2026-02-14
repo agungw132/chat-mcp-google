@@ -4,6 +4,25 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.2.1] - 2026-02-14
+
+### Added
+- Added Google Docs MCP phase 1.1 tools:
+  - `share_docs_to_user`
+  - `export_docs_document`
+  - `append_docs_structured_content`
+  - `replace_docs_text_if_revision`
+
+### Changed
+- Extended Docs intent keywords in chat orchestration for sharing/export/revision-safe workflows.
+- Updated Docs MCP documentation and pseudocode for phase 1.1 behavior and constraints.
+
+### Fixed
+- Improved Docs MCP live reliability by retrying once after token invalidation on `401` for Docs/Drive calls.
+
+### Quality
+- Expanded Docs unit/smoke tests to cover phase 1.1 tools.
+
 ## [1.2.0] - 2026-02-14
 
 ### Added

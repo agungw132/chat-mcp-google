@@ -189,3 +189,86 @@ async def test_read_docs_document_propagates_error(monkeypatch):
     monkeypatch.setattr(docs_server, "_docs_get", fake_docs_get)
     result = await docs_server.read_docs_document("doc1")
     assert result == "Error: Google Docs API request failed: 403 - forbidden"
+
+
+@pytest.mark.asyncio
+async def test_share_docs_to_user(monkeypatch):
+    async def fake_drive_post_json(path, params=None, json_body=None):
+        assert path == "/files/doc1/permissions"
+        assert json_body["type"] == "user"
+        assert json_body["role"] == "reader"
+        assert json_body["emailAddress"] == "alice@example.com"
+        assert params["sendNotificationEmail"] == "true"
+        return {"id": "perm1"}, None
+
+    async def fake_drive_get(path, params=None):
+        assert path == "/files/doc1"
+        return {"name": "Project Plan", "webViewLink": "https://docs.google.com/document/d/doc1/edit"}, None
+
+    monkeypatch.setattr(docs_server, "_drive_post_json", fake_drive_post_json)
+    monkeypatch.setattr(docs_server, "_drive_get", fake_drive_get)
+    result = await docs_server.share_docs_to_user("doc1", "alice@example.com")
+    assert "Google Docs sharing completed:" in result
+    assert "Permission ID: perm1" in result
+
+
+@pytest.mark.asyncio
+async def test_export_docs_document_txt(monkeypatch):
+    async def fake_drive_get_bytes(path, params=None):
+        assert path == "/files/doc1/export"
+        assert params["mimeType"] == "text/plain"
+        return b"Hello from export", None
+
+    async def fake_drive_get(path, params=None):
+        assert path == "/files/doc1"
+        return {"name": "Project Plan", "webViewLink": "https://docs.google.com/document/d/doc1/edit"}, None
+
+    monkeypatch.setattr(docs_server, "_drive_get_bytes", fake_drive_get_bytes)
+    monkeypatch.setattr(docs_server, "_drive_get", fake_drive_get)
+    result = await docs_server.export_docs_document("doc1", export_format="txt", max_chars=200)
+    assert "Google Docs export completed:" in result
+    assert "Format: txt" in result
+    assert "Hello from export" in result
+
+
+@pytest.mark.asyncio
+async def test_append_docs_structured_content(monkeypatch):
+    async def fake_docs_get(path):
+        assert path == "/documents/doc1"
+        return {"body": {"content": [{"endIndex": 1}, {"endIndex": 15}]}}, None
+
+    async def fake_docs_post(path, json_body=None):
+        assert path == "/documents/doc1:batchUpdate"
+        text = json_body["requests"][0]["insertText"]["text"]
+        assert "Agenda" in text
+        assert "- Item A" in text
+        assert "1. Step 1" in text
+        return {"replies": []}, None
+
+    monkeypatch.setattr(docs_server, "_docs_get", fake_docs_get)
+    monkeypatch.setattr(docs_server, "_docs_post", fake_docs_post)
+    result = await docs_server.append_docs_structured_content(
+        "doc1",
+        heading="Agenda",
+        bullet_items=["Item A"],
+        numbered_items=["Step 1"],
+    )
+    assert "Structured content appended to Google Docs document:" in result
+    assert "Characters Added:" in result
+
+
+@pytest.mark.asyncio
+async def test_replace_docs_text_if_revision_mismatch(monkeypatch):
+    async def fake_docs_get(path):
+        assert path == "/documents/doc1"
+        return {"revisionId": "rev-current"}, None
+
+    monkeypatch.setattr(docs_server, "_docs_get", fake_docs_get)
+    result = await docs_server.replace_docs_text_if_revision(
+        "doc1",
+        expected_revision_id="rev-expected",
+        find_text="old",
+        replace_text="new",
+    )
+    assert "Revision mismatch. No changes applied." in result
+    assert "Current Revision ID: rev-current" in result

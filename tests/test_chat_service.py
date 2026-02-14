@@ -1141,6 +1141,13 @@ def test_infer_requested_servers_docs_keywords():
     assert "docs" in servers
 
 
+def test_infer_requested_servers_docs_phase_1_1_keywords():
+    servers = chat_service._infer_requested_servers(
+        "share this document and export to docx with revision-safe replace"
+    )
+    assert "docs" in servers
+
+
 def test_build_tool_result_contract_prefers_structured_error():
     raw = json.dumps(
         {

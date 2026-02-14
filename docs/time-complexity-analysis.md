@@ -178,11 +178,21 @@ Largest recurring overhead is repeated MCP session bootstrap (`uv run python <se
 - read structure `O(N)` to find append index + batch update `O(|text|)`.
 - `replace_docs_text(document_id, find_text, replace_text)`:
 - single batch update request, practical complexity dominated by Docs backend processing.
+- `share_docs_to_user(document_id, user_email, role, ...)`:
+- permission create `O(1)` + metadata fetch `O(1)`.
+- `export_docs_document(document_id, export_format, max_chars)`:
+- export fetch `O(B)` where `B` is exported byte size; text decode/truncate is `O(min(B, max_chars))`.
+- `append_docs_structured_content(...)`:
+- build structured block `O(K)` (sum of item lengths) + append path `O(N + K)`.
+- `replace_docs_text_if_revision(...)`:
+- revision fetch `O(1)` + conditional replace batch update `O(1)` request count (backend-dependent processing).
 
 ## 7.2 Bottleneck notes
 
 - Large documents increase `read_docs_document` traversal cost.
 - Repeated write operations in separate tool calls (create -> append -> replace) add network round trips.
+- Exporting large docs to text/binary increases payload transfer time (`O(B)`).
+- Revision-safe writes add one extra pre-check call but reduce race-condition risk.
 
 ## 8) Maps MCP Complexity
 

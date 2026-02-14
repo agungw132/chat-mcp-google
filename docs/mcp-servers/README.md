@@ -38,6 +38,6 @@ Common multi-server patterns:
 - Share Drive file with user:
 - `drive.search_drive_files` -> `drive.create_drive_shared_link_to_user`
 - Create and refine Google Doc:
-- `docs.create_docs_document` -> `docs.append_docs_text` -> `docs.replace_docs_text`
+- `docs.create_docs_document` -> `docs.append_docs_structured_content` -> `docs.replace_docs_text_if_revision` -> `docs.share_docs_to_user`
 - Find place then route:
 - `maps.search_places_text` -> `maps.get_place_details` -> `maps.get_directions`

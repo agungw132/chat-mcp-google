@@ -401,7 +401,7 @@ Note:
 - `create_drive_shared_link_to_user(item_id, user_email, role='reader', send_notification=True, message='', expires_in_days=7)`
 - `create_drive_public_link(item_id, role='reader', allow_discovery=False)` (file/folder)
 
-### Docs (Phase 1)
+### Docs (Phase 1 + 1.1)
 - `list_docs_documents(limit=10)`
 - `search_docs_documents(query, limit=10)`
 - `get_docs_document_metadata(document_id)`
@@ -409,6 +409,10 @@ Note:
 - `create_docs_document(title, initial_content='')`
 - `append_docs_text(document_id, text)`
 - `replace_docs_text(document_id, find_text, replace_text='', match_case=False)`
+- `share_docs_to_user(document_id, user_email, role='reader', send_notification=True, message='')`
+- `export_docs_document(document_id, export_format='pdf', max_chars=8000)` (`txt`, `html`, `pdf`, `docx`)
+- `append_docs_structured_content(document_id, heading='', paragraph='', bullet_items=[], numbered_items=[])`
+- `replace_docs_text_if_revision(document_id, expected_revision_id, find_text, replace_text='', match_case=False)`
 
 ### Maps
 - `search_places_text(query, limit=5, language='en', region=None)`
