@@ -56,6 +56,15 @@ class _SearchDocumentsInput(BaseModel):
     include_word: bool = True
 
 
+class _ListDocumentTemplatesInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    limit: int = Field(default=10, ge=1, le=100, strict=True)
+    folder_name: str = Field(default="Documents", min_length=1)
+    name_contains: str = Field(default="template")
+    include_word: bool = True
+
+
 class _DocumentIdInput(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
@@ -565,6 +574,35 @@ def _format_document_file_line(item: dict) -> str:
     )
 
 
+async def _resolve_folder_id_by_name(folder_name: str) -> tuple[str | None, str | None]:
+    safe_folder_name = _escape_query(folder_name)
+    data, err = await _drive_get(
+        "/files",
+        params={
+            "q": (
+                "mimeType='application/vnd.google-apps.folder' "
+                f"and trashed=false and name='{safe_folder_name}'"
+            ),
+            "orderBy": "modifiedTime desc",
+            "pageSize": 1,
+            "fields": "files(id,name),nextPageToken",
+            "supportsAllDrives": "true",
+            "includeItemsFromAllDrives": "true",
+        },
+    )
+    if err:
+        return None, err
+
+    folders = data.get("files", []) if isinstance(data, dict) else []
+    if not folders:
+        return None, f"Drive folder '{folder_name}' was not found."
+
+    folder_id = str((folders[0] or {}).get("id", "")).strip()
+    if not folder_id:
+        return None, f"Drive folder '{folder_name}' was found but has no id."
+    return folder_id, None
+
+
 def _extract_docx_text(payload: bytes) -> str:
     namespace = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
     try:
@@ -685,6 +723,69 @@ async def list_documents(limit: int = 10, include_word: bool = True) -> str:
         )
     except Exception as exc:
         return f"Error listing document files: {str(exc)}"
+
+
+@mcp.tool()
+async def list_document_templates(
+    limit: int = 10,
+    folder_name: str = "Documents",
+    name_contains: str = "template",
+    include_word: bool = True,
+) -> str:
+    """Lists document template candidates from a Drive folder."""
+    try:
+        params = _ListDocumentTemplatesInput.model_validate(
+            {
+                "limit": limit,
+                "folder_name": folder_name,
+                "name_contains": name_contains,
+                "include_word": include_word,
+            }
+        )
+        folder_id, folder_err = await _resolve_folder_id_by_name(params.folder_name)
+        if folder_err:
+            return folder_err
+        if not folder_id:
+            return f"Drive folder '{params.folder_name}' was not found."
+
+        query = _document_query(params.include_word) + f" and '{folder_id}' in parents"
+        name_filter = params.name_contains.strip()
+        if name_filter:
+            query += f" and name contains '{_escape_query(name_filter)}'"
+
+        data, err = await _drive_get(
+            "/files",
+            params={
+                "q": query,
+                "orderBy": "modifiedTime desc",
+                "pageSize": params.limit,
+                "fields": "files(id,name,mimeType,modifiedTime,webViewLink),nextPageToken",
+                "supportsAllDrives": "true",
+                "includeItemsFromAllDrives": "true",
+            },
+        )
+        if err:
+            return err
+
+        files = data.get("files", []) if isinstance(data, dict) else []
+        if not files:
+            filter_text = name_filter if name_filter else "(none)"
+            return (
+                "No document templates found.\n"
+                f"Folder: {params.folder_name}\n"
+                f"Filter: {filter_text}\n"
+                f"include_word: {params.include_word}"
+            )
+
+        lines = [_format_document_file_line(item) for item in files]
+        filter_text = name_filter if name_filter else "(none)"
+        return (
+            f"Document templates in folder '{params.folder_name}' "
+            f"(include_word={params.include_word}, filter={filter_text}, showing {len(lines)}):\n"
+            + "\n".join(lines)
+        )
+    except Exception as exc:
+        return f"Error listing document templates: {str(exc)}"
 
 
 @mcp.tool()

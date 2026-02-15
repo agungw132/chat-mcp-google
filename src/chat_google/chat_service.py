@@ -76,6 +76,7 @@ MCP_DOC_FILENAMES = {
     "drive": "drive.md",
     "docs": "docs.md",
     "sheets": "sheets.md",
+    "slides": "slides.md",
     "maps": "maps.md",
 }
 SERVER_INTENT_KEYWORDS = {
@@ -178,6 +179,21 @@ SERVER_INTENT_KEYWORDS = {
         "formula",
         "share spreadsheet",
     ),
+    "slides": (
+        "slides",
+        "google slides",
+        "presentation",
+        "slide deck",
+        "deck",
+        "ppt",
+        "pptx",
+        "powerpoint",
+        "create slide",
+        "add slide",
+        "share presentation",
+        "export presentation",
+        "convert powerpoint",
+    ),
     "maps": (
         "maps",
         "google maps",
@@ -205,6 +221,7 @@ def get_servers_config() -> list[ServerConfig]:
         ServerConfig(name="drive", script="drive_server.py"),
         ServerConfig(name="docs", script="docs_server.py"),
         ServerConfig(name="sheets", script="sheets_server.py"),
+        ServerConfig(name="slides", script="slides_server.py"),
         ServerConfig(name="maps", script="maps_server.py"),
     ]
 

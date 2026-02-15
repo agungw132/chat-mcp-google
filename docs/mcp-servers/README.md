@@ -10,6 +10,7 @@ These documents are written for a calling/orchestrating agent (for example `chat
 - `docs/mcp-servers/drive.md`
 - `docs/mcp-servers/docs.md`
 - `docs/mcp-servers/sheets.md`
+- `docs/mcp-servers/slides.md`
 - `docs/mcp-servers/maps.md`
 
 ## How to use this set
@@ -29,6 +30,7 @@ These documents are written for a calling/orchestrating agent (for example `chat
 - File/storage/sharing -> `drive`
 - Document authoring/editing -> `docs`
 - Spreadsheet operations -> `sheets`
+- Presentation operations -> `slides`
 - Address/place/directions -> `maps`
 
 Common multi-server patterns:
@@ -53,5 +55,13 @@ Common multi-server patterns:
 - `sheets.export_google_sheet` -> `sheets.share_spreadsheet`
 - Template-to-report spreadsheet flow:
 - `sheets.create_spreadsheet_from_template` -> `sheets.import_csv_to_sheet` -> `sheets.create_pivot_table` -> `sheets.insert_sheet_chart`
+- Cross-format template discovery in `Documents` folder:
+- `docs.list_document_templates` + `sheets.list_spreadsheet_templates` + `slides.list_presentation_templates`
+- XLSX template with date-column population:
+- `sheets.list_spreadsheet_templates` -> `sheets.create_spreadsheet_from_template` -> `sheets.convert_excel_to_google_sheet` -> `sheets.update_sheet_values`
+- Read and convert PowerPoint file:
+- `slides.search_presentations(include_powerpoint=True)` -> `slides.read_powerpoint_document` -> `slides.convert_powerpoint_to_google_slides` (optional)
+- Create and share presentation:
+- `slides.create_slides_presentation` -> `slides.add_text_slide` -> `slides.share_presentation_to_user`
 - Find place then route:
 - `maps.search_places_text` -> `maps.get_place_details` -> `maps.get_directions`

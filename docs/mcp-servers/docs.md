@@ -8,7 +8,7 @@ Source:
 
 ## Purpose
 
-Use this server for Google Docs document discovery, metadata retrieval, content read, creation, text editing, sharing, export, revision-safe updates, and Word file interoperability (`.docx/.doc`).
+Use this server for Google Docs document discovery, template discovery, metadata retrieval, content read, creation, text editing, sharing, export, revision-safe updates, and Word file interoperability (`.docx/.doc`).
 
 ## Required configuration
 
@@ -41,6 +41,7 @@ Required Google API enablement:
 - `append_docs_structured_content(document_id, heading='', paragraph='', bullet_items=[], numbered_items=[])`
 - `replace_docs_text_if_revision(document_id, expected_revision_id, find_text, replace_text='', match_case=False)`
 - `list_documents(limit=10, include_word=True)` (native Docs + optional `.docx/.doc`)
+- `list_document_templates(limit=10, folder_name='Documents', name_contains='template', include_word=True)` (template candidates in target folder)
 - `search_documents(query, limit=10, include_word=True)` (native Docs + optional `.docx/.doc`)
 - `get_document_metadata(file_id)` (native Docs and Word files)
 - `read_word_document(file_id, max_chars=8000)` (direct `.docx` read)
@@ -53,6 +54,7 @@ Discovery:
 - recent docs overview -> `list_docs_documents`
 - title-based lookup -> `search_docs_documents`
 - mixed docs/word discovery -> `list_documents` / `search_documents`
+- template lookup in a folder (default `Documents`) -> `list_document_templates`
 
 Read:
 
@@ -111,6 +113,7 @@ Typical causes:
 - `share_docs_to_user` accepts roles: `reader`, `commenter`, `writer`.
 - `read_word_document` supports `.docx` only; `.doc` must be converted first.
 - `convert_word_to_google_doc` supports Word input types `.docx` and `.doc`.
+- `list_document_templates` defaults to `name_contains='template'`; set `name_contains=''` to list all document candidates in the target folder.
 
 ## Recommended patterns
 

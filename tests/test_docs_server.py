@@ -319,6 +319,42 @@ async def test_list_documents_include_word(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_list_document_templates(monkeypatch):
+    async def fake_drive_get(path, params=None):
+        assert path == "/files"
+        query = (params or {}).get("q", "")
+        if "mimeType='application/vnd.google-apps.folder'" in query:
+            return {"files": [{"id": "folder-docs", "name": "Documents"}]}, None
+        assert "'folder-docs' in parents" in query
+        assert "name contains 'template'" in query
+        return (
+            {
+                "files": [
+                    {
+                        "id": "tmpl1",
+                        "name": "Template Proposal.docx",
+                        "mimeType": docs_server.DOCX_MIME,
+                        "modifiedTime": "2026-02-14T09:00:00Z",
+                        "webViewLink": "https://drive.google.com/file/d/tmpl1/view",
+                    }
+                ]
+            },
+            None,
+        )
+
+    monkeypatch.setattr(docs_server, "_drive_get", fake_drive_get)
+    result = await docs_server.list_document_templates(
+        limit=3,
+        folder_name="Documents",
+        name_contains="template",
+        include_word=True,
+    )
+    assert "Document templates in folder 'Documents'" in result
+    assert "Template Proposal.docx" in result
+    assert "Type: word_docx" in result
+
+
+@pytest.mark.asyncio
 async def test_get_document_metadata_docx(monkeypatch):
     async def fake_drive_get(path, params=None):
         assert path == "/files/w1"

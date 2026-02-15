@@ -27,6 +27,8 @@ def _build_excel_bytes():
 @pytest.mark.asyncio
 async def test_sheets_tools_smoke(monkeypatch):
     async def fake_drive_get(path, params=None):
+        if path == "/files" and "mimeType='application/vnd.google-apps.folder'" in (params or {}).get("q", ""):
+            return ({"files": [{"id": "folder-docs", "name": "Documents"}]}, None)
         if path == "/files/tpl1":
             return (
                 {
@@ -292,6 +294,7 @@ async def test_sheets_tools_smoke(monkeypatch):
     created = await sheets_server.create_sheets_spreadsheet("Roadmap", sheet_title="Plan")
     added_tab = await sheets_server.add_sheet_tab("sp1", "Q2")
     listed_unified = await sheets_server.list_spreadsheets(limit=3, include_excel=True)
+    template_list = await sheets_server.list_spreadsheet_templates(limit=3, folder_name="Documents")
     searched_unified = await sheets_server.search_spreadsheets("Budget", include_excel=True)
     converted = await sheets_server.convert_excel_to_google_sheet("x1")
     exported = await sheets_server.export_google_sheet("sp1", export_format="csv")
@@ -349,6 +352,7 @@ async def test_sheets_tools_smoke(monkeypatch):
     assert "Google Sheets tab created" in added_tab
     assert "Spreadsheet files (include_excel=True" in listed_unified
     assert "excel_xls" in listed_unified
+    assert "Spreadsheet templates in folder 'Documents'" in template_list
     assert "Spreadsheet search results for 'Budget'" in searched_unified
     assert "conversion completed" in converted.lower()
     assert "Google Sheets export completed" in exported

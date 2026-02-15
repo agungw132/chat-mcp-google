@@ -676,6 +676,42 @@ async def test_create_spreadsheet_from_template(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_list_spreadsheet_templates(monkeypatch):
+    async def fake_drive_get(path, params=None):
+        assert path == "/files"
+        query = (params or {}).get("q", "")
+        if "mimeType='application/vnd.google-apps.folder'" in query:
+            return {"files": [{"id": "folder-docs", "name": "Documents"}]}, None
+        assert "'folder-docs' in parents" in query
+        assert "name contains 'template'" in query
+        return (
+            {
+                "files": [
+                    {
+                        "id": "tmpl-sheet-1",
+                        "name": "Template Budget.xlsx",
+                        "mimeType": sheets_server.EXCEL_MIME,
+                        "modifiedTime": "2026-02-14T09:00:00Z",
+                        "webViewLink": "https://drive.google.com/file/d/tmpl-sheet-1/view",
+                    }
+                ]
+            },
+            None,
+        )
+
+    monkeypatch.setattr(sheets_server, "_drive_get", fake_drive_get)
+    result = await sheets_server.list_spreadsheet_templates(
+        limit=3,
+        folder_name="Documents",
+        name_contains="template",
+        include_excel=True,
+    )
+    assert "Spreadsheet templates in folder 'Documents'" in result
+    assert "Template Budget.xlsx" in result
+    assert "Type: excel_xlsx" in result
+
+
+@pytest.mark.asyncio
 async def test_import_csv_to_sheet(monkeypatch):
     async def fake_sheets_post(path, json_body=None, params=None):
         assert path.endswith(":clear")

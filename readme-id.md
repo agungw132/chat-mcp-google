@@ -14,6 +14,7 @@ Chat app berbasis Gradio yang terhubung ke MCP server:
 - Google Drive
 - Google Docs
 - Google Sheets
+- Google Slides
 - Google Maps
 
 Mendukung:
@@ -51,10 +52,15 @@ uv run python app.py
   - `GOOGLE_OAUTH_CLIENT_SECRET`
 - Gunakan script `get_google_drive_access_token.py` untuk isi access token + refresh token + OAuth client credentials sekaligus.
 - Untuk Google Maps, lihat `README.md` section `How to Get GOOGLE_MAPS_API_KEY and Required APIs`.
-- Untuk Google Sheets, lihat `README.md` section `Google Docs and Sheets API Setup Notes`.
+- Untuk Google Sheets/Slides, lihat `README.md` section `Google Docs, Sheets, and Slides API Setup Notes`.
 - MCP Sheets sekarang mendukung baca `.xlsx/.xls` langsung (`read_excel_values`) dan konversi `.xlsx/.xls` ke Google Sheets (`convert_excel_to_google_sheet`).
 - MCP Sheets fase lanjut menambah export (`export_google_sheet`), batch read/write (`batch_get_sheet_values`, `batch_update_sheet_values`), dan sharing (`share_spreadsheet`).
 - MCP Sheets sekarang juga mendukung template copy, import CSV, chart insertion, range protection, pivot table creation, dan permission audit.
+- MCP Docs/Sheets/Slides sekarang punya tools template discovery:
+  - `list_document_templates`
+  - `list_spreadsheet_templates`
+  - `list_presentation_templates`
+- MCP Slides sekarang mendukung list/search native Slides + `.pptx/.ppt`, baca teks slide native, baca `.pptx` langsung, konversi `.pptx/.ppt` ke Google Slides, share, dan export (`pdf`/`pptx`/`txt`).
 - MCP Docs sekarang mendukung interop Word: list/search `.docx/.doc`, metadata unified, baca `.docx` langsung, dan konversi Word ke native Google Docs.
 - API minimal yang harus aktif: `Geocoding API`, `Directions API`, `Places API`.
 - Tersedia script programatik: `get_google_maps_api_key.py` (lihat contoh command di `README.md`).
@@ -69,6 +75,9 @@ uv run python app.py
 6. Maps gagal: cek `GOOGLE_MAPS_API_KEY` valid dan Maps APIs sudah di-enable di Google Cloud.
 7. Gmail/Calendar/Contacts gagal login: cek `GOOGLE_ACCOUNT` dan `GOOGLE_APP_KEY`, pastikan 2-Step Verification + App Password sudah aktif.
 8. Muncul warning MCP server unavailable: cek `chat_app.log` (`Failed to start MCP server`), jalankan server terkait manual, lalu retry query.
+9. Live smoke test bisa gagal karena provider (`429`/`400`) meskipun tools MCP sehat; coba model lain atau validasi langsung via tool path.
+10. Query template default cari nama mengandung `template`; kalau kosong, pakai `name_contains=''`.
+11. Untuk write ke hasil clone `.xlsx`, konversi dulu ke native Google Sheet (`convert_excel_to_google_sheet`) baru tulis dengan `update_sheet_values`.
 
 ## Referensi Lengkap
 

@@ -9,17 +9,18 @@ This analysis is based on:
 - `docs/pseudocode-mcp-drive.md`
 - `docs/pseudocode-mcp-docs.md`
 - `docs/pseudocode-mcp-sheets.md`
+- `docs/pseudocode-mcp-slides.md`
 - `docs/pseudocode-mcp-maps.md`
 
 ## 1) Notation
 
 - `H`: number of chat history messages
 - `X`: total normalized text size across `history + user message`
-- `S`: number of MCP servers (currently 7)
+- `S`: number of MCP servers (currently 8)
 - `T`: total number of discovered MCP tools (across all servers)
 - `R`: number of tool-calling rounds in one model request
 - `C`: total tool calls in one request
-- `N`: number of items returned by an external provider (emails/events/files/documents/contacts/places/routes)
+- `N`: number of items returned by an external provider (emails/events/files/documents/presentations/contacts/places/routes)
 - `L`: user-requested list limit (typically <= 100)
 - `F`: number of CardDAV contact links
 - `B`: contacts fetch batch size (`FETCH_BATCH_SIZE`, currently 20)
@@ -170,6 +171,8 @@ Largest recurring overhead is repeated MCP session bootstrap (`uv run python <se
 - `list_docs_documents(limit=L)`: `O(L)` formatting on Drive list results.
 - `search_docs_documents(limit=L)`: `O(L)` formatting on search results.
 - `list_documents(limit=L, include_word=...)`: `O(L)` formatting on unified (Docs + Word) list results.
+- `list_document_templates(limit=L, folder_name=..., name_contains=..., include_word=...)`:
+- folder lookup `O(FoldersPage)` + filtered file formatting `O(L)`.
 - `search_documents(limit=L, include_word=...)`: `O(L)` formatting on unified search results.
 - `get_docs_document_metadata(document_id)`:
 - Docs fetch `O(1)` + Drive metadata fetch `O(1)`.
@@ -236,6 +239,8 @@ Largest recurring overhead is repeated MCP session bootstrap (`uv run python <se
 - `create_sheets_spreadsheet(...)`: `O(1)` request/formatting.
 - `add_sheet_tab(...)`: `O(1)` request/formatting.
 - `list_spreadsheets(limit=L, include_excel=...)`: `O(L)` formatting on mixed spreadsheet file results.
+- `list_spreadsheet_templates(limit=L, folder_name=..., name_contains=..., include_excel=...)`:
+- folder lookup `O(FoldersPage)` + filtered file formatting `O(L)`.
 - `search_spreadsheets(limit=L, include_excel=...)`: `O(L)` formatting on mixed search results.
 - `get_spreadsheet_metadata(file_id)`:
 - native Sheets: `O(Tabs)` tab extraction
@@ -277,6 +282,44 @@ Largest recurring overhead is repeated MCP session bootstrap (`uv run python <se
 - Batch read/write tools reduce request count for multi-range operations and usually improve wall-clock latency vs repeated single-range calls.
 - CSV import scales with provided CSV payload size (`O(R*C)` normalization before request).
 - Permission audits scale linearly with permission entries returned (`O(P)` formatting).
+
+## 9.3 Slides MCP Complexity
+
+- `list_slides_presentations(limit=L)`: `O(L)` formatting on native Slides list results.
+- `search_slides_presentations(limit=L)`: `O(L)` formatting on native Slides search results.
+- `get_slides_presentation_metadata(presentation_id)`:
+- Slides API fetch `O(1)` request count, local slide summary extraction `O(Slides + ElementsText)`.
+- `read_slides_presentation(presentation_id, max_chars)`:
+- slide text extraction `O(ElementsText)` with truncation bounded by `max_chars`.
+- `create_slides_presentation(...)`:
+- create request `O(1)`, optional initial slide insertion `O(1)` request count.
+- `add_text_slide(...)`:
+- one batchUpdate request with constant-size request envelope `O(1)`.
+- `list_presentations(limit=L, include_powerpoint=...)`: `O(L)` formatting on mixed (Slides + PowerPoint) list results.
+- `list_presentation_templates(limit=L, folder_name=..., name_contains=..., include_powerpoint=...)`:
+- folder lookup `O(FoldersPage)` + filtered file formatting `O(L)`.
+- `search_presentations(limit=L, include_powerpoint=...)`: `O(L)` formatting on mixed search results.
+- `get_presentation_metadata(file_id)`:
+- native Slides: `O(Slides + ElementsText)` for local text hint extraction.
+- `.pptx`: `O(B)` download + XML parsing across slide files (`O(Slides + TextNodes)`).
+- `.ppt`: constant-time metadata + guidance.
+- `read_powerpoint_document(file_id, max_chars)`:
+- `.pptx` download + parse `O(B)` with truncation bounded by `max_chars`;
+- `.ppt` and native Slides paths are constant-time guidance.
+- `convert_powerpoint_to_google_slides(file_id, ...)`:
+- copy-based conversion path: `O(1)` request count.
+- upload fallback path: `O(B)` transfer for source bytes and multipart upload.
+- `share_presentation_to_user(...)`:
+- metadata lookup + permission create: `O(1)` request count.
+- `export_slides_presentation(presentation_id, export_format, ...)`:
+- text export (`txt`): `O(E)` decode/preview where `E` is export size.
+- binary export (`pdf`/`pptx`): `O(E)` transfer, `O(1)` local formatting.
+
+## 9.4 Slides Bottleneck notes
+
+- Large decks with dense text increase extraction work in metadata/read paths.
+- Direct `.pptx` read is bandwidth-sensitive due to full file download (`O(B)`).
+- Conversion fallback path duplicates bandwidth cost (`download + upload`) when copy conversion fails.
 
 ## 10) End-to-End Hotspots (Priority Order)
 

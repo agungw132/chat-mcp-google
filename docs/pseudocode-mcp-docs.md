@@ -26,6 +26,7 @@ List:
 
 Unified list:
   limit (1..100), include_word(bool)
+  list templates: folder_name, name_contains, include_word
 
 Search:
   query (non-empty), limit (1..100)
@@ -238,6 +239,21 @@ IF file is .docx:
 IF file is .doc:
   return legacy-binary hint (convert-first workflow)
 RETURN unified metadata summary
+```
+
+## 5.3e list_document_templates(limit=10, folder_name='Documents', name_contains='template', include_word=True)
+
+```text
+VALIDATE input
+RESOLVE folder id by folder_name:
+  QUERY Drive folders where name == folder_name and trashed=false
+BUILD unified document mime query from include_word
+ADD parent filter: '<folder_id>' in parents
+IF name_contains is non-empty:
+  ADD name contains filter
+QUERY Drive files
+FORMAT each result with type label
+RETURN template candidate summary
 ```
 
 ## 5.4 read_docs_document(document_id, max_chars=8000)

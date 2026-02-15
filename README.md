@@ -7,13 +7,14 @@
 ![Validation: Pydantic](https://img.shields.io/badge/validation-Pydantic-E92063)
 ![Tests: pytest](https://img.shields.io/badge/tests-pytest-22c55e)
 
-A production-oriented Gradio chat application that integrates LLM tool-calling with seven Google-focused MCP servers:
+A production-oriented Gradio chat application that integrates LLM tool-calling with eight Google-focused MCP servers:
 - Gmail (IMAP/SMTP)
 - Google Calendar (CalDAV)
 - Google Contacts (CardDAV)
 - Google Drive (Drive REST API)
 - Google Docs (Docs REST API + Drive metadata)
 - Google Sheets (Sheets REST API + Drive file discovery)
+- Google Slides (Slides REST API + Drive file discovery)
 - Google Maps (Maps/Places/Geocoding/Directions APIs)
 
 The application supports two model backends:
@@ -43,12 +44,14 @@ Current Gemini models:
 - Intent-based MCP tool gating (only relevant server tools are sent to the model per request).
 - Runtime MCP policy injection from `docs/mcp-servers/*.md` into system instructions.
 - Multi-round tool-call orchestration for OpenAI-compatible models (tool -> tool -> final answer).
-- Integrated Gmail, Calendar, Contacts, Drive, Docs, Sheets, and Maps actions.
+- Integrated Gmail, Calendar, Contacts, Drive, Docs, Sheets, Slides, and Maps actions.
 - Auto-invite flow: when prompt includes `invite` + email and event is created, app sends invitation via Gmail MCP.
 - Calendar invitation delivery supports `.ics` (`text/calendar`) accept/reject flow.
 - Drive phase 1.1 includes folder creation, text upload, move, user sharing, and public link creation.
 - Docs now supports Word interoperability: discover `.docx/.doc`, read `.docx` directly, and convert Word files to native Google Docs.
 - Sheets phase 2 includes spreadsheet discovery, metadata, tab management, range read/write operations, direct `.xlsx/.xls` read, `.xlsx/.xls` conversion to native Google Sheets, export, batch range operations, spreadsheet sharing, template copy, CSV import, chart insertion, protection, pivot creation, and permission auditing.
+- Template discovery tools are available for Docs/Sheets/Slides (`list_document_templates`, `list_spreadsheet_templates`, `list_presentation_templates`).
+- Slides phase 1 includes presentation discovery, metadata, slide text extraction, presentation creation, text-slide insertion, presentation sharing, export, and PowerPoint `.pptx/.ppt` interoperability (discovery/read/convert).
 - Contacts search resilience: automatically falls back to HTTP/1.1 when `h2` is unavailable.
 - Tool output truncation before model feedback to reduce context bloat on large tool results.
 - Structured tool-result contract (`success`, `error`, `data`) between MCP tool execution and model context.
@@ -97,6 +100,7 @@ flowchart TD
     TOOL --> MD[drive_server.py]
     TOOL --> MDO[docs_server.py]
     TOOL --> MSH[sheets_server.py]
+    TOOL --> MSL[slides_server.py]
     TOOL --> MM[maps_server.py]
 
     MG --> GI[Gmail IMAP/SMTP]
@@ -105,6 +109,7 @@ flowchart TD
     MD --> GD[Google Drive REST API]
     MDO --> GDO[Google Docs API]
     MSH --> GSH[Google Sheets API]
+    MSL --> GSL[Google Slides API]
     MM --> GM[Google Maps APIs]
 
     ROUTE --> LLM
@@ -125,6 +130,7 @@ flowchart TD
 - `drive_server.py`: Drive MCP wrapper entrypoint.
 - `docs_server.py`: Docs MCP wrapper entrypoint.
 - `sheets_server.py`: Sheets MCP wrapper entrypoint.
+- `slides_server.py`: Slides MCP wrapper entrypoint.
 - `maps_server.py`: Maps MCP wrapper entrypoint.
 - `src/chat_google/chat_service.py`: main orchestration logic.
 - `src/chat_google/ui.py`: Gradio UI composition and event wiring.
@@ -148,6 +154,7 @@ flowchart TD
 - Google Cloud project with Drive API enabled (for `GOOGLE_DRIVE_ACCESS_TOKEN`)
 - Google Cloud project with Google Docs API enabled (for Docs MCP tools)
 - Google Cloud project with Google Sheets API enabled (for Sheets MCP tools)
+- Google Cloud project with Google Slides API enabled (for Slides MCP tools)
 - OAuth client credentials (`Desktop app`) for Drive auto-refresh flow
   - `GOOGLE_OAUTH_CLIENT_ID`
   - `GOOGLE_OAUTH_CLIENT_SECRET`
@@ -180,8 +187,8 @@ MODEL=azure_ai/kimi-k2.5
 Variable reference:
 - `GOOGLE_ACCOUNT`: Google account used by Gmail/Calendar/Contacts MCP servers.
 - `GOOGLE_APP_KEY`: Google App Password (16 characters, no spaces).
-- `GOOGLE_DRIVE_ACCESS_TOKEN`: OAuth 2.0 Bearer token for Drive/Docs/Sheets MCP (not App Password).
-- `GOOGLE_DRIVE_REFRESH_TOKEN`: optional refresh token for automatic Drive/Docs/Sheets token renewal.
+- `GOOGLE_DRIVE_ACCESS_TOKEN`: OAuth 2.0 Bearer token for Drive/Docs/Sheets/Slides MCP (not App Password).
+- `GOOGLE_DRIVE_REFRESH_TOKEN`: optional refresh token for automatic Drive/Docs/Sheets/Slides token renewal.
 - `GOOGLE_OAUTH_CLIENT_ID`: OAuth client ID paired with `GOOGLE_DRIVE_REFRESH_TOKEN`.
 - `GOOGLE_OAUTH_CLIENT_SECRET`: OAuth client secret paired with `GOOGLE_DRIVE_REFRESH_TOKEN`.
 - `GOOGLE_MAPS_API_KEY`: Google Maps API key for Maps MCP tools.
@@ -249,12 +256,13 @@ uv run --with google-auth-oauthlib python get_google_drive_access_token.py --cli
 Default scope in this script is full Drive access:
 - `https://www.googleapis.com/auth/drive`
 
-## Google Docs and Sheets API Setup Notes
+## Google Docs, Sheets, and Slides API Setup Notes
 
 - Enable `Google Docs API` in the same GCP project as your OAuth credentials.
 - Enable `Google Sheets API` in the same GCP project.
-- Existing token flow in `get_google_drive_access_token.py` (scope `https://www.googleapis.com/auth/drive`) is compatible with Docs/Sheets MCP in this repository.
-- Docs/Sheets MCP and Drive MCP share the same token environment variables.
+- Enable `Google Slides API` in the same GCP project.
+- Existing token flow in `get_google_drive_access_token.py` (scope `https://www.googleapis.com/auth/drive`) is compatible with Docs/Sheets/Slides MCP in this repository.
+- Docs/Sheets/Slides MCP and Drive MCP share the same token environment variables.
 
 ## How to Get `GOOGLE_OAUTH_CLIENT_ID` and `GOOGLE_OAUTH_CLIENT_SECRET`
 
@@ -365,6 +373,7 @@ uv run python contacts_server.py
 uv run python drive_server.py
 uv run python docs_server.py
 uv run python sheets_server.py
+uv run python slides_server.py
 uv run python maps_server.py
 ```
 
@@ -421,6 +430,7 @@ Note:
 - `append_docs_structured_content(document_id, heading='', paragraph='', bullet_items=[], numbered_items=[])`
 - `replace_docs_text_if_revision(document_id, expected_revision_id, find_text, replace_text='', match_case=False)`
 - `list_documents(limit=10, include_word=True)` (native Docs + optional `.docx/.doc`)
+- `list_document_templates(limit=10, folder_name='Documents', name_contains='template', include_word=True)`
 - `search_documents(query, limit=10, include_word=True)` (native Docs + optional `.docx/.doc`)
 - `get_document_metadata(file_id)` (native Docs and Word files)
 - `read_word_document(file_id, max_chars=8000)` (direct `.docx` read)
@@ -436,6 +446,7 @@ Note:
 - `create_sheets_spreadsheet(title, sheet_title='Sheet1')`
 - `add_sheet_tab(spreadsheet_id, title, row_count=1000, column_count=26)`
 - `list_spreadsheets(limit=10, include_excel=True)` (native Sheets + optional `.xlsx/.xls`)
+- `list_spreadsheet_templates(limit=10, folder_name='Documents', name_contains='template', include_excel=True)`
 - `search_spreadsheets(query, limit=10, include_excel=True)` (native Sheets + optional `.xlsx/.xls`)
 - `get_spreadsheet_metadata(file_id)` (works for native Sheets and `.xlsx/.xls`)
 - `read_excel_values(file_id, sheet_name='', range_a1='A1:Z50', max_rows=50, max_cols=20)` (reads `.xlsx/.xls` directly)
@@ -450,6 +461,22 @@ Note:
 - `protect_sheet_or_range(spreadsheet_id, sheet_id=None, range_a1='', editors=[], warning_only=False)`
 - `create_pivot_table(spreadsheet_id, source_range, target_sheet, target_cell='A1', summarize_function='COUNTA')`
 - `get_spreadsheet_permissions(file_id)`
+
+### Slides (Phase 1)
+- `list_slides_presentations(limit=10)`
+- `search_slides_presentations(query, limit=10)`
+- `get_slides_presentation_metadata(presentation_id)`
+- `read_slides_presentation(presentation_id, max_chars=8000)`
+- `create_slides_presentation(title, initial_slide_title='')`
+- `add_text_slide(presentation_id, title, body='')`
+- `list_presentations(limit=10, include_powerpoint=True)` (native Slides + optional `.pptx/.ppt`)
+- `list_presentation_templates(limit=10, folder_name='Documents', name_contains='template', include_powerpoint=True)`
+- `search_presentations(query, limit=10, include_powerpoint=True)` (native Slides + optional `.pptx/.ppt`)
+- `get_presentation_metadata(file_id)` (native Slides and `.pptx/.ppt`)
+- `read_powerpoint_document(file_id, max_chars=8000)` (direct `.pptx` read)
+- `convert_powerpoint_to_google_slides(file_id, new_title='', move_to_parent=True)` (`.pptx/.ppt` -> native Slides)
+- `share_presentation_to_user(presentation_id, user_email, role='reader', send_notification=True, message='')`
+- `export_slides_presentation(presentation_id, export_format='pdf', max_chars=8000)` (`pdf`, `pptx`, `txt`)
 
 ### Maps
 - `search_places_text(query, limit=5, language='en', region=None)`
@@ -473,6 +500,7 @@ Coverage includes:
 - All Drive phase-1 and phase-1.1 tools
 - All Docs tools (including Word `.docx/.doc` interop flows)
 - All Sheets tools (including `.xlsx/.xls` read/convert flows)
+- All Slides tools (including PowerPoint `.pptx/.ppt` read/convert flows)
 - All Maps tools
 - Core chat orchestration paths (Gemini, OpenAI-compatible, streaming, tool-calls, payload normalization)
 - Default model resolution behavior
@@ -492,6 +520,23 @@ Notes:
 - This test calls real external APIs and can consume quota.
 - If `SMOKE_MODEL` starts with `gemini`, set `GOOGLE_GEMINI_API_KEY`.
 - For non-Gemini models, set `BASE_URL` and `API_KEY`.
+- Some providers may intermittently return `429`/`400` during live smoke runs; retry with another model if needed.
+
+Example prompt for template-driven Sheets workflow:
+
+```powershell
+$env:RUN_LIVE_SMOKE="1"
+$env:SMOKE_MODEL="deepseek-v3-2-251201"
+$env:SMOKE_PROMPT="create a new xlsx from template, add column A with date from today until end of year"
+uv run --with pytest --with pytest-asyncio --with-requirements requirements.txt pytest -q tests/test_live_smoke_no_ui.py -m live_smoke
+```
+
+Expected tool sequence for that prompt:
+- `sheets.list_spreadsheet_templates` (or `sheets.search_spreadsheets` fallback)
+- `sheets.create_spreadsheet_from_template`
+- `sheets.convert_excel_to_google_sheet`
+- `sheets.update_sheet_values`
+- optional verification: `sheets.read_sheet_values`
 
 ## Observability
 
@@ -571,10 +616,40 @@ Notes:
 - Ensure the token scope includes full Drive access (`https://www.googleapis.com/auth/drive`) and Sheets API is enabled.
 - Ensure your account has edit access to the spreadsheet (viewer/commenter cannot write structure updates).
 
-11. Response includes warning about unavailable MCP server
+14. Google Slides tools fail with 401/403
+- Ensure Google Slides API is enabled in your Google Cloud project.
+- Ensure token includes Slides/Drive access (existing Drive full scope is compatible).
+- Ensure the authenticated account has access to the target presentation.
+
+15. `.pptx` / `.ppt` file is not readable by `read_slides_presentation`
+- `read_slides_presentation` is only for native Google Slides (`application/vnd.google-apps.presentation`).
+- Use `read_powerpoint_document` for `.pptx` files.
+- For legacy `.ppt`, run `convert_powerpoint_to_google_slides` first.
+
+16. `export_slides_presentation` returns an error or empty preview
+- `export_slides_presentation` only exports native Google Slides files; convert `.pptx/.ppt` first.
+- Binary formats (`pdf`, `pptx`) return metadata and byte size without binary preview.
+
+17. Response includes warning about unavailable MCP server
 - This appears when your request domain needs a server that failed to initialize.
 - Check `chat_app.log` lines containing `Failed to start MCP server`.
 - Start the affected server manually (`uv run python <server>_server.py`) and retry.
+
+18. Live smoke query fails with `Error: 429` or `Gemini API error (400)`
+- This is typically provider-side quota/rate-limit/validation, not MCP tool logic.
+- Retry the same prompt with another model.
+- Validate MCP behavior directly with server tools when provider instability blocks chat-level smoke.
+
+19. Template query returns no results in `Documents`
+- `list_*_templates` defaults to `name_contains='template'`.
+- If your files do not contain the word `template`, rerun with `name_contains=''`.
+- Fallback query pattern:
+- first run `list_*_templates(..., name_contains='template')`
+- then run `search_*` or `list_*_templates(..., name_contains='')` to broaden discovery.
+
+20. Creating `.xlsx` from template but cannot write with Sheets APIs
+- `.xlsx` is not a native Google Sheet.
+- Use `convert_excel_to_google_sheet` first, then write with `update_sheet_values` / `append_sheet_row`.
 
 ## Security Notes
 

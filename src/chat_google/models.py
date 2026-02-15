@@ -6,7 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field
 class ServerConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    name: Literal["gmail", "calendar", "contacts", "drive", "maps", "docs", "sheets"]
+    name: Literal["gmail", "calendar", "contacts", "drive", "maps", "docs", "sheets", "slides"]
     script: str = Field(min_length=1)
 
 

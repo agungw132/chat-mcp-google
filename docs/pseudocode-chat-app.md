@@ -27,7 +27,7 @@ IF executed as script:
 
 ```text
 CREATE Gradio Blocks with title "Sumopod AI Chat"
-RENDER heading: "Sumopod AI Chat (Gmail, Calendar, Contacts, Drive, Docs, Sheets, Maps)"
+RENDER heading: "Sumopod AI Chat (Gmail, Calendar, Contacts, Drive, Docs, Sheets, Slides, Maps)"
 CREATE chatbot component
 CREATE textbox for user prompt + Retry button
 CREATE model dropdown with AVAILABLE_MODELS, default DEFAULT_MODEL + Clear button
@@ -86,7 +86,7 @@ DEFINE system instruction variants:
 
 ```text
 ServerConfig:
-    name in {"gmail","calendar","contacts","drive","docs","sheets","maps"}
+    name in {"gmail","calendar","contacts","drive","docs","sheets","slides","maps"}
     script non-empty string
 
 RuntimeSettings:
@@ -109,7 +109,7 @@ MetricsRecord:
 ```text
 1. Normalize user/history payloads
 2. Load runtime config from .env
-3. Start MCP stdio sessions (gmail/calendar/contacts/drive/docs/sheets/maps)
+3. Start MCP stdio sessions (gmail/calendar/contacts/drive/docs/sheets/slides/maps)
 4. Build tool schemas for selected model family (Gemini vs OpenAI-compatible)
 5. Infer request intent and filter tools to relevant MCP server domains
 6. Inject MCP policy summary from `docs/mcp-servers/*.md` into system prompts
@@ -136,6 +136,7 @@ RETURN list:
     ("drive", "drive_server.py")
     ("docs", "docs_server.py")
     ("sheets", "sheets_server.py")
+    ("slides", "slides_server.py")
     ("maps", "maps_server.py")
 ```
 
@@ -278,6 +279,9 @@ IF docs/word keywords appear (e.g. word document/.docx/.doc/convert to google do
 
 IF sheet advanced-operation keywords appear (e.g. csv/tsv/import csv/template spreadsheet/export spreadsheet/batch update/pivot/chart/protect range/share spreadsheet):
     add "sheets"
+
+IF slides/powerpoint keywords appear (e.g. presentation/ppt/pptx/slide deck/convert powerpoint/add slide):
+    add "slides"
 
 RETURN requested
 ```
@@ -454,6 +458,7 @@ Files:
 - `drive_server.py`
 - `docs_server.py`
 - `sheets_server.py`
+- `slides_server.py`
 - `maps_server.py`
 
 Pattern:

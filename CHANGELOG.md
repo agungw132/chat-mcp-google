@@ -4,7 +4,26 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-02-15
+
 ### Added
+- Added new Google Slides MCP server (phase 1) with tools:
+  - `list_slides_presentations`
+  - `search_slides_presentations`
+  - `get_slides_presentation_metadata`
+  - `read_slides_presentation`
+  - `create_slides_presentation`
+  - `add_text_slide`
+  - `list_presentations` (native Slides + optional `.pptx/.ppt`)
+  - `search_presentations` (native Slides + optional `.pptx/.ppt`)
+  - `get_presentation_metadata` (native + `.pptx/.ppt`)
+  - `read_powerpoint_document` (direct `.pptx` read)
+  - `convert_powerpoint_to_google_slides` (`.pptx/.ppt` -> native Slides)
+  - `share_presentation_to_user`
+  - `export_slides_presentation`
+- Added root wrapper entrypoint: `slides_server.py`.
+- Added Slides unit and smoke tests.
+- Added Slides pseudocode and agent-oriented documentation.
 - Added Google Docs Word interoperability tools:
   - `list_documents` (native Docs + optional `.docx/.doc`)
   - `search_documents` (native Docs + optional `.docx/.doc`)
@@ -23,13 +42,22 @@ All notable changes to this project will be documented in this file.
   - `create_pivot_table`
   - `get_spreadsheet_permissions`
 - Added unit/smoke coverage for Sheets phase-2 tools.
+- Added template discovery tools:
+  - `docs.list_document_templates`
+  - `sheets.list_spreadsheet_templates`
+  - `slides.list_presentation_templates`
 
 ### Changed
+- Integrated Slides MCP into server registry, model validation, intent routing keywords, and runtime MCP policy doc mapping.
+- Updated app caption and README architecture/tooling docs to include Slides MCP.
+- Updated `.env.template` and setup docs to clarify Drive OAuth token reuse for Docs/Sheets/Slides MCP.
 - Extended Docs intent keywords and system instruction guidance for Word (`.docx/.doc`) workflows.
 - Extended Sheets intent keywords in chat orchestration for export/batch/share prompts.
 - Updated Google Sheets system instruction guidance for export, batch operations, and sharing workflows.
 - Updated MCP onboarding runbook/checklist to explicitly support extending existing MCP servers by phase.
 - Updated README and `docs/` documentation for Sheets phase-2 and Docs Word-interoperability capabilities and usage patterns.
+- Updated README troubleshooting and live-smoke guidance with provider error handling (`429`/`400`) and template-query fallback behavior.
+- Updated MCP pseudocode/agent docs to include template discovery flows and `.xlsx` template-to-write conversion pattern.
 
 ## [1.2.1] - 2026-02-14
 

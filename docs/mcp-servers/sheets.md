@@ -8,7 +8,7 @@ Source:
 
 ## Purpose
 
-Use this server for Google Sheets discovery, metadata retrieval, tab creation, cell-level read/write operations, export, batch range operations, and spreadsheet sharing.
+Use this server for Google Sheets discovery, template discovery/copy, metadata retrieval, tab creation, cell-level read/write operations, export, batch range operations, and spreadsheet sharing.
 
 ## Required configuration
 
@@ -38,6 +38,7 @@ Required Google API enablement:
 - `create_sheets_spreadsheet(title, sheet_title='Sheet1')`
 - `add_sheet_tab(spreadsheet_id, title, row_count=1000, column_count=26)`
 - `list_spreadsheets(limit=10, include_excel=True)`
+- `list_spreadsheet_templates(limit=10, folder_name='Documents', name_contains='template', include_excel=True)`
 - `search_spreadsheets(query, limit=10, include_excel=True)`
 - `get_spreadsheet_metadata(file_id)` (native Sheets or `.xlsx/.xls`)
 - `read_excel_values(file_id, sheet_name='', range_a1='A1:Z50', max_rows=50, max_cols=20)`
@@ -60,6 +61,7 @@ Discovery:
 - recent spreadsheet overview -> `list_sheets_spreadsheets`
 - title-based lookup -> `search_sheets_spreadsheets`
 - mixed spreadsheet inventory (native + `.xlsx/.xls`) -> `list_spreadsheets` / `search_spreadsheets`
+- spreadsheet template lookup in a folder (default `Documents`) -> `list_spreadsheet_templates`
 
 Read:
 
@@ -79,6 +81,7 @@ Write:
 - share spreadsheet access to one user -> `share_spreadsheet`
 - copy from template -> `create_spreadsheet_from_template`
 - import CSV text into tab -> `import_csv_to_sheet`
+- list template candidates in folder -> `list_spreadsheet_templates`
 
 Export:
 
@@ -131,6 +134,8 @@ Typical causes:
 - `insert_sheet_chart` expects valid Google Sheets chart spec object in `chart_spec`.
 - `protect_sheet_or_range` requires `sheet_id` or `range_a1`.
 - `create_pivot_table` creates a basic pivot configuration (first source column grouped, next source column summarized when available).
+- `list_spreadsheet_templates` defaults to `name_contains='template'`; set `name_contains=''` to list all spreadsheet candidates in the folder.
+- `create_spreadsheet_from_template` can produce non-native files when the template is `.xlsx/.xls`; convert first before write operations.
 
 ## Recommended patterns
 
@@ -162,3 +167,12 @@ Share workflow:
 
 1. `search_spreadsheets(query=..., include_excel=True)` or `list_spreadsheets(...)`
 2. `share_spreadsheet(file_id=..., user_email=..., role='writer')`
+
+Template-to-date-column workflow (`.xlsx` template):
+
+1. `list_spreadsheet_templates(folder_name='Documents', name_contains='template', include_excel=True)`
+2. If empty: `list_spreadsheet_templates(folder_name='Documents', name_contains='', include_excel=True)` or `search_spreadsheets(query='template', include_excel=True)`
+3. `create_spreadsheet_from_template(template_file_id=..., new_title=...)`
+4. `convert_excel_to_google_sheet(file_id=<new_xlsx_id>, new_title=...)`
+5. `update_sheet_values(spreadsheet_id=<converted_id>, range_a1='Sheet1!A1:A<rows>', values=[[yyyy-mm-dd], ...])`
+6. optional verification: `read_sheet_values(spreadsheet_id=<converted_id>, range_a1='Sheet1!A1:A5')`

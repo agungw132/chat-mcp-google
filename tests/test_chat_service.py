@@ -20,16 +20,18 @@ async def test_chat_empty_message():
     assert outputs == [[{"role": "user", "content": "x"}]]
 
 
-def test_get_servers_config_includes_drive_docs_sheets_and_maps():
+def test_get_servers_config_includes_drive_docs_sheets_slides_and_maps():
     names = [cfg.name for cfg in chat_service.get_servers_config()]
     scripts = [cfg.script for cfg in chat_service.get_servers_config()]
     assert "drive" in names
     assert "docs" in names
     assert "sheets" in names
+    assert "slides" in names
     assert "maps" in names
     assert "drive_server.py" in scripts
     assert "docs_server.py" in scripts
     assert "sheets_server.py" in scripts
+    assert "slides_server.py" in scripts
     assert "maps_server.py" in scripts
 
 
@@ -1183,6 +1185,13 @@ def test_infer_requested_servers_sheets_xls_keywords():
         "list my xls files and convert to google sheet"
     )
     assert "sheets" in servers
+
+
+def test_infer_requested_servers_slides_keywords():
+    servers = chat_service._infer_requested_servers(
+        "create presentation from my pptx and add slide with summary"
+    )
+    assert "slides" in servers
 
 
 def test_build_tool_result_contract_prefers_structured_error():

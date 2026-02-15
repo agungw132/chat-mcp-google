@@ -44,6 +44,7 @@ Add tab:
 Unified spreadsheet tools:
   list/search with include_excel flag
   metadata by file_id for native Sheets or .xlsx/.xls
+  list_spreadsheet_templates(limit, folder_name, name_contains, include_excel)
 
 Excel tools:
   read_excel_values(file_id, sheet_name, range_a1, max_rows, max_cols)
@@ -210,6 +211,22 @@ QUERY Drive files with mime filter:
   include_excel=true -> native Sheets OR xlsx/xls
 FORMAT lines with normalized type labels (google_sheet/excel_xlsx/excel_xls)
 RETURN list output
+```
+
+## 5.9b list_spreadsheet_templates(limit=10, folder_name='Documents', name_contains='template', include_excel=True)
+
+```text
+VALIDATE input
+RESOLVE folder id by folder_name:
+  QUERY Drive folders where name == folder_name and trashed=false
+  select latest modified match
+BUILD unified spreadsheet mime query from include_excel
+ADD parent filter: '<folder_id>' in parents
+IF name_contains is non-empty:
+  ADD name contains filter
+QUERY Drive files
+FORMAT lines with normalized type labels
+RETURN template candidate summary
 ```
 
 ## 5.10 search_spreadsheets(query, limit=10, include_excel=True)

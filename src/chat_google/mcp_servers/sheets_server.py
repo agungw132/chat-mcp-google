@@ -71,6 +71,15 @@ class _SearchSpreadsheetsInput(BaseModel):
     include_excel: bool = True
 
 
+class _ListSpreadsheetTemplatesInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    limit: int = Field(default=10, ge=1, le=100, strict=True)
+    folder_name: str = Field(default="Documents", min_length=1)
+    name_contains: str = Field(default="template")
+    include_excel: bool = True
+
+
 class _SpreadsheetIdInput(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
@@ -598,6 +607,35 @@ def _format_spreadsheet_file_line(item: dict) -> str:
     )
 
 
+async def _resolve_folder_id_by_name(folder_name: str) -> tuple[str | None, str | None]:
+    safe_folder_name = _escape_query(folder_name)
+    data, err = await _drive_get(
+        "/files",
+        params={
+            "q": (
+                "mimeType='application/vnd.google-apps.folder' "
+                f"and trashed=false and name='{safe_folder_name}'"
+            ),
+            "orderBy": "modifiedTime desc",
+            "pageSize": 1,
+            "fields": "files(id,name),nextPageToken",
+            "supportsAllDrives": "true",
+            "includeItemsFromAllDrives": "true",
+        },
+    )
+    if err:
+        return None, err
+
+    folders = data.get("files", []) if isinstance(data, dict) else []
+    if not folders:
+        return None, f"Drive folder '{folder_name}' was not found."
+
+    folder_id = str((folders[0] or {}).get("id", "")).strip()
+    if not folder_id:
+        return None, f"Drive folder '{folder_name}' was found but has no id."
+    return folder_id, None
+
+
 async def _sheets_get(path: str, params: dict | None = None) -> tuple[dict | None, str | None]:
     token = _get_access_token()
     url = f"{SHEETS_API_BASE}{path}"
@@ -1067,6 +1105,69 @@ async def search_spreadsheets(query: str, limit: int = 10, include_excel: bool =
         )
     except Exception as exc:
         return f"Error searching spreadsheet files: {str(exc)}"
+
+
+@mcp.tool()
+async def list_spreadsheet_templates(
+    limit: int = 10,
+    folder_name: str = "Documents",
+    name_contains: str = "template",
+    include_excel: bool = True,
+) -> str:
+    """Lists spreadsheet template candidates from a Drive folder."""
+    try:
+        params = _ListSpreadsheetTemplatesInput.model_validate(
+            {
+                "limit": limit,
+                "folder_name": folder_name,
+                "name_contains": name_contains,
+                "include_excel": include_excel,
+            }
+        )
+        folder_id, folder_err = await _resolve_folder_id_by_name(params.folder_name)
+        if folder_err:
+            return folder_err
+        if not folder_id:
+            return f"Drive folder '{params.folder_name}' was not found."
+
+        query = _spreadsheet_query(params.include_excel) + f" and '{folder_id}' in parents"
+        name_filter = params.name_contains.strip()
+        if name_filter:
+            query += f" and name contains '{_escape_query(name_filter)}'"
+
+        data, err = await _drive_get(
+            "/files",
+            params={
+                "q": query,
+                "orderBy": "modifiedTime desc",
+                "pageSize": params.limit,
+                "fields": "files(id,name,mimeType,modifiedTime,webViewLink),nextPageToken",
+                "supportsAllDrives": "true",
+                "includeItemsFromAllDrives": "true",
+            },
+        )
+        if err:
+            return err
+
+        files = data.get("files", []) if isinstance(data, dict) else []
+        if not files:
+            filter_text = name_filter if name_filter else "(none)"
+            return (
+                "No spreadsheet templates found.\n"
+                f"Folder: {params.folder_name}\n"
+                f"Filter: {filter_text}\n"
+                f"include_excel: {params.include_excel}"
+            )
+
+        lines = [_format_spreadsheet_file_line(item) for item in files]
+        filter_text = name_filter if name_filter else "(none)"
+        return (
+            f"Spreadsheet templates in folder '{params.folder_name}' "
+            f"(include_excel={params.include_excel}, filter={filter_text}, showing {len(lines)}):\n"
+            + "\n".join(lines)
+        )
+    except Exception as exc:
+        return f"Error listing spreadsheet templates: {str(exc)}"
 
 
 @mcp.tool()

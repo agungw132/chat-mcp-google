@@ -23,6 +23,8 @@ def _build_docx_bytes(text: str = "Hello from docx\nSecond line") -> bytes:
 @pytest.mark.asyncio
 async def test_docs_tools_smoke(monkeypatch):
     async def fake_drive_get(path, params=None):
+        if path == "/files" and "mimeType='application/vnd.google-apps.folder'" in (params or {}).get("q", ""):
+            return ({"files": [{"id": "folder-docs", "name": "Documents"}]}, None)
         if path == "/files" and "name contains" not in (params or {}).get("q", ""):
             return (
                 {
@@ -141,6 +143,7 @@ async def test_docs_tools_smoke(monkeypatch):
     shared = await docs_server.share_docs_to_user("doc1", "alice@example.com")
     exported = await docs_server.export_docs_document("doc1", export_format="txt")
     listed_unified = await docs_server.list_documents(limit=3, include_word=True)
+    templates = await docs_server.list_document_templates(limit=3, folder_name="Documents")
     searched_unified = await docs_server.search_documents("Notes", include_word=True)
     metadata_unified = await docs_server.get_document_metadata("w1")
     read_word = await docs_server.read_word_document("w1")
@@ -168,6 +171,7 @@ async def test_docs_tools_smoke(monkeypatch):
     assert "Google Docs sharing completed" in shared
     assert "Google Docs export completed" in exported
     assert "Document files (include_word=True" in listed_unified
+    assert "Document templates in folder 'Documents'" in templates
     assert "Document search results for 'Notes'" in searched_unified
     assert "Document Metadata:" in metadata_unified
     assert "Word Document Content:" in read_word
