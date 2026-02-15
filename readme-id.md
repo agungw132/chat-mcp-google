@@ -23,7 +23,7 @@ Mendukung:
 
 ## Update Penting Terbaru
 
-- Default model fallback: `azure_ai/kimi-k2.5`
+- Default model fallback: `seed-2-0-mini-260215`
 - Multi-round tool calls untuk model non-Gemini
 - Intent-based tool gating (tool yang dikirim ke model difilter sesuai domain intent prompt)
 - Ringkasan policy MCP dari `docs/mcp-servers/*.md` sekarang diinjeksi ke system prompt runtime
@@ -45,7 +45,7 @@ uv run python app.py
 ## Catatan Konfigurasi
 
 - Contoh starter config: `.env.template`
-- Nilai default model di template: `MODEL=azure_ai/kimi-k2.5`
+- Nilai default model di template: `MODEL=seed-2-0-mini-260215`
 - Drive sekarang mendukung auto-refresh token via:
   - `GOOGLE_DRIVE_REFRESH_TOKEN`
   - `GOOGLE_OAUTH_CLIENT_ID`

@@ -7,8 +7,8 @@ def test_resolve_default_model_from_env(monkeypatch):
 
 
 def test_resolve_default_model_from_env_sumopod_model(monkeypatch):
-    monkeypatch.setenv("MODEL", "azure_ai/kimi-k2.5")
-    assert constants.resolve_default_model() == "azure_ai/kimi-k2.5"
+    monkeypatch.setenv("MODEL", "seed-2-0-mini-260215")
+    assert constants.resolve_default_model() == "seed-2-0-mini-260215"
 
 
 def test_resolve_default_model_from_env_new_sumopod_model(monkeypatch):
@@ -18,4 +18,4 @@ def test_resolve_default_model_from_env_new_sumopod_model(monkeypatch):
 
 def test_resolve_default_model_fallback_when_invalid(monkeypatch):
     monkeypatch.setenv("MODEL", "unknown-model")
-    assert constants.resolve_default_model() == "azure_ai/kimi-k2.5"
+    assert constants.resolve_default_model() == "seed-2-0-mini-260215"

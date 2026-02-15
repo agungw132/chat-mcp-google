@@ -11,7 +11,7 @@ AVAILABLE_MODELS = [
     "kimi-k2-250905",
     "kimi-k2-thinking-251104",
     "seed-1-8-251228",
-    "azure_ai/kimi-k2.5",
+    "seed-2-0-mini-260215",
     "gemini-3-flash-preview",
     "gemini-3-pro-preview",
     "gemini-2.5-pro",
@@ -19,7 +19,7 @@ AVAILABLE_MODELS = [
     "gemini-2.5-flash-lite",
 ]
 
-_FALLBACK_DEFAULT_MODEL = "azure_ai/kimi-k2.5"
+_FALLBACK_DEFAULT_MODEL = "seed-2-0-mini-260215"
 
 
 def resolve_default_model() -> str:

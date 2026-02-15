@@ -1,4 +1,4 @@
-﻿# Chat MCP Google
+# Chat MCP Google
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/downloads/)
 ![Package Manager: uv](https://img.shields.io/badge/package%20manager-uv-4B5563)
@@ -28,7 +28,7 @@ Current OpenAI-compatible (non-Gemini) models:
 - `kimi-k2-250905`
 - `kimi-k2-thinking-251104`
 - `seed-1-8-251228`
-- `azure_ai/kimi-k2.5`
+- `seed-2-0-mini-260215`
 
 Current Gemini models:
 - `gemini-3-flash-preview`
@@ -181,7 +181,7 @@ GOOGLE_MAPS_API_KEY=your-google-maps-api-key
 GOOGLE_GEMINI_API_KEY=your_gemini_key
 BASE_URL=https://ai.sumopod.com
 API_KEY=your_api_key
-MODEL=azure_ai/kimi-k2.5
+MODEL=seed-2-0-mini-260215
 ```
 
 Variable reference:
@@ -196,7 +196,7 @@ Variable reference:
 - `BASE_URL`: OpenAI-compatible API base URL for non-Gemini models.
 - `API_KEY`: bearer token for `BASE_URL`.
 - `MODEL`: initial default model for the UI dropdown (must exist in available model list).
-  - If missing/invalid, app fallback default is `azure_ai/kimi-k2.5`.
+  - If missing/invalid, app fallback default is `seed-2-0-mini-260215`.
 
 ## How to Get Google App Password (Personal Account)
 
@@ -511,7 +511,7 @@ Use this to validate a real query directly through `chat_service` (without Gradi
 
 ```powershell
 $env:RUN_LIVE_SMOKE="1"
-$env:SMOKE_MODEL="azure_ai/kimi-k2.5"
+$env:SMOKE_MODEL="seed-2-0-mini-260215"
 $env:SMOKE_PROMPT="find recent emails from social school, summarize"
 uv run --with pytest --with pytest-asyncio --with-requirements requirements.txt pytest -q tests/test_live_smoke_no_ui.py -m live_smoke
 ```
@@ -526,7 +526,7 @@ Example prompt for template-driven Sheets workflow:
 
 ```powershell
 $env:RUN_LIVE_SMOKE="1"
-$env:SMOKE_MODEL="deepseek-v3-2-251201"
+$env:SMOKE_MODEL="seed-2-0-mini-260215"
 $env:SMOKE_PROMPT="create a new xlsx from template, add column A with date from today until end of year"
 uv run --with pytest --with pytest-asyncio --with-requirements requirements.txt pytest -q tests/test_live_smoke_no_ui.py -m live_smoke
 ```
@@ -656,4 +656,3 @@ Expected tool sequence for that prompt:
 - Never commit `.env`.
 - Treat logs and metrics as potentially sensitive data.
 - Run this application only in trusted environments.
-

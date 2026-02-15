@@ -68,7 +68,7 @@ demo.launch()
 ```text
 LOAD .env
 DEFINE AVAILABLE_MODELS list (Gemini + OpenAI-compatible providers)
-DEFINE fallback default model = "azure_ai/kimi-k2.5"
+DEFINE fallback default model = "seed-2-0-mini-260215"
 
 FUNCTION resolve_default_model():
     model_from_env = MODEL env var

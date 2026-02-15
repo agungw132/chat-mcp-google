@@ -1,8 +1,13 @@
-﻿# Changelog
+# Changelog
 
 All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
+
+### Changed
+- Synchronized docs with latest model defaults and smoke-test examples (seed-2-0-mini-260215).
+- Updated chat pseudocode default fallback model to seed-2-0-mini-260215.
+
 
 ## [1.3.0] - 2026-02-15
 
@@ -48,6 +53,7 @@ All notable changes to this project will be documented in this file.
   - `slides.list_presentation_templates`
 
 ### Changed
+- Replaced `azure_ai/kimi-k2.5` with `seed-2-0-mini-260215` in available non-Gemini model list and set fallback/default model to `seed-2-0-mini-260215`.
 - Integrated Slides MCP into server registry, model validation, intent routing keywords, and runtime MCP policy doc mapping.
 - Updated app caption and README architecture/tooling docs to include Slides MCP.
 - Updated `.env.template` and setup docs to clarify Drive OAuth token reuse for Docs/Sheets/Slides MCP.
@@ -264,4 +270,3 @@ All notable changes to this project will be documented in this file.
 
 ### Quality
 - Test baseline for this release: `31 passed`.
-
