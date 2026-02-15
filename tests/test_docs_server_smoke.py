@@ -1,6 +1,23 @@
 import pytest
+from io import BytesIO
+import zipfile
 
 from chat_google.mcp_servers import docs_server
+
+
+def _build_docx_bytes(text: str = "Hello from docx\nSecond line") -> bytes:
+    xml = f"""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:body>
+    <w:p><w:r><w:t>{text.splitlines()[0]}</w:t></w:r></w:p>
+    <w:p><w:r><w:t>{text.splitlines()[-1]}</w:t></w:r></w:p>
+  </w:body>
+</w:document>
+"""
+    buf = BytesIO()
+    with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("word/document.xml", xml)
+    return buf.getvalue()
 
 
 @pytest.mark.asyncio
@@ -13,8 +30,16 @@ async def test_docs_tools_smoke(monkeypatch):
                         {
                             "id": "doc1",
                             "name": "Notes",
+                            "mimeType": docs_server.GOOGLE_DOC_MIME,
                             "modifiedTime": "2026-02-14T08:00:00Z",
                             "webViewLink": "https://docs.google.com/document/d/doc1/edit",
+                        },
+                        {
+                            "id": "w1",
+                            "name": "Spec.docx",
+                            "mimeType": docs_server.DOCX_MIME,
+                            "modifiedTime": "2026-02-13T08:00:00Z",
+                            "webViewLink": "https://drive.google.com/file/d/w1/view",
                         }
                     ]
                 },
@@ -27,6 +52,7 @@ async def test_docs_tools_smoke(monkeypatch):
                         {
                             "id": "doc1",
                             "name": "Notes",
+                            "mimeType": docs_server.GOOGLE_DOC_MIME,
                             "modifiedTime": "2026-02-14T08:00:00Z",
                             "webViewLink": "https://docs.google.com/document/d/doc1/edit",
                         }
@@ -37,10 +63,25 @@ async def test_docs_tools_smoke(monkeypatch):
         if path == "/files/doc1":
             return (
                 {
+                    "id": "doc1",
                     "modifiedTime": "2026-02-14T08:00:00Z",
+                    "mimeType": docs_server.GOOGLE_DOC_MIME,
                     "owners": [{"displayName": "Alice", "emailAddress": "alice@example.com"}],
                     "webViewLink": "https://docs.google.com/document/d/doc1/edit",
                     "name": "Notes",
+                },
+                None,
+            )
+        if path == "/files/w1":
+            return (
+                {
+                    "id": "w1",
+                    "name": "Spec.docx",
+                    "mimeType": docs_server.DOCX_MIME,
+                    "modifiedTime": "2026-02-13T08:00:00Z",
+                    "size": "2345",
+                    "webViewLink": "https://drive.google.com/file/d/w1/view",
+                    "owners": [{"displayName": "Alice", "emailAddress": "alice@example.com"}],
                 },
                 None,
             )
@@ -49,11 +90,15 @@ async def test_docs_tools_smoke(monkeypatch):
     async def fake_drive_get_bytes(path, params=None):
         if path == "/files/doc1/export":
             return b"Hello from docs export", None
+        if path == "/files/w1" and (params or {}).get("alt") == "media":
+            return _build_docx_bytes("Alpha\nBeta"), None
         return b"", None
 
     async def fake_drive_post_json(path, params=None, json_body=None):
         if path == "/files/doc1/permissions":
             return {"id": "perm1"}, None
+        if path == "/files/w1/copy":
+            return {"id": "doc-conv", "name": "Spec"}, None
         return {}, None
 
     async def fake_docs_get(path):
@@ -95,6 +140,11 @@ async def test_docs_tools_smoke(monkeypatch):
     replaced = await docs_server.replace_docs_text("doc1", "Hello", "Hi")
     shared = await docs_server.share_docs_to_user("doc1", "alice@example.com")
     exported = await docs_server.export_docs_document("doc1", export_format="txt")
+    listed_unified = await docs_server.list_documents(limit=3, include_word=True)
+    searched_unified = await docs_server.search_documents("Notes", include_word=True)
+    metadata_unified = await docs_server.get_document_metadata("w1")
+    read_word = await docs_server.read_word_document("w1")
+    converted = await docs_server.convert_word_to_google_doc("w1")
     structured = await docs_server.append_docs_structured_content(
         "doc1",
         heading="Agenda",
@@ -117,5 +167,10 @@ async def test_docs_tools_smoke(monkeypatch):
     assert "Text replacement completed in Google Docs document" in replaced
     assert "Google Docs sharing completed" in shared
     assert "Google Docs export completed" in exported
+    assert "Document files (include_word=True" in listed_unified
+    assert "Document search results for 'Notes'" in searched_unified
+    assert "Document Metadata:" in metadata_unified
+    assert "Word Document Content:" in read_word
+    assert "Word to Google Docs conversion completed:" in converted
     assert "Structured content appended to Google Docs document" in structured
     assert "Safe text replacement completed in Google Docs document" in safe_replaced

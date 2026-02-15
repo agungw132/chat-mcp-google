@@ -7,6 +7,14 @@ Use this when asked to add any new server (for example: Maps, Drive, Docs, Sheet
 Quick companion checklist:
 - `docs/mcp-server-addition-checklist.md`
 
+## 0) Decide Track: New Server vs Existing Server Phase
+
+1. If adding a brand-new MCP server, follow this runbook end-to-end.
+2. If extending an existing MCP server (for example adding phase 2 tools), reuse the same process but skip:
+- new wrapper/server registration steps when unchanged
+- env/auth additions when existing auth variables are already sufficient
+3. In both tracks, tests and docs updates remain mandatory.
+
 ## 1) Confirm Scope First
 
 1. Define phase and boundaries (`phase 1`, `phase 1.1`, optional items).

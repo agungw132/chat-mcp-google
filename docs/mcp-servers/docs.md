@@ -8,7 +8,7 @@ Source:
 
 ## Purpose
 
-Use this server for Google Docs document discovery, metadata retrieval, content read, creation, text editing, sharing, export, and revision-safe updates.
+Use this server for Google Docs document discovery, metadata retrieval, content read, creation, text editing, sharing, export, revision-safe updates, and Word file interoperability (`.docx/.doc`).
 
 ## Required configuration
 
@@ -40,6 +40,11 @@ Required Google API enablement:
 - `export_docs_document(document_id, export_format='pdf', max_chars=8000)` where `export_format` is one of `txt|html|pdf|docx`
 - `append_docs_structured_content(document_id, heading='', paragraph='', bullet_items=[], numbered_items=[])`
 - `replace_docs_text_if_revision(document_id, expected_revision_id, find_text, replace_text='', match_case=False)`
+- `list_documents(limit=10, include_word=True)` (native Docs + optional `.docx/.doc`)
+- `search_documents(query, limit=10, include_word=True)` (native Docs + optional `.docx/.doc`)
+- `get_document_metadata(file_id)` (native Docs and Word files)
+- `read_word_document(file_id, max_chars=8000)` (direct `.docx` read)
+- `convert_word_to_google_doc(file_id, new_title='', move_to_parent=True)` (`.docx/.doc` -> native Docs)
 
 ## Calling guidance
 
@@ -47,11 +52,14 @@ Discovery:
 
 - recent docs overview -> `list_docs_documents`
 - title-based lookup -> `search_docs_documents`
+- mixed docs/word discovery -> `list_documents` / `search_documents`
 
 Read:
 
 - metadata and owner/link details -> `get_docs_document_metadata`
 - plain text extraction -> `read_docs_document`
+- unified metadata by file id -> `get_document_metadata`
+- direct `.docx` text read -> `read_word_document`
 
 Write:
 
@@ -68,6 +76,10 @@ Collaboration:
 Export:
 
 - export doc as txt/html/pdf/docx -> `export_docs_document`
+
+Word conversion:
+
+- convert `.docx/.doc` to native Docs -> `convert_word_to_google_doc`
 
 ## Output semantics
 
@@ -97,6 +109,8 @@ Typical causes:
 - `replace_docs_text` reports `Occurrences Changed` based on Docs `replaceAllText` response.
 - `replace_docs_text_if_revision` performs optimistic concurrency guard by comparing current revision before update.
 - `share_docs_to_user` accepts roles: `reader`, `commenter`, `writer`.
+- `read_word_document` supports `.docx` only; `.doc` must be converted first.
+- `convert_word_to_google_doc` supports Word input types `.docx` and `.doc`.
 
 ## Recommended patterns
 
@@ -115,6 +129,16 @@ Read and summarize:
 
 1. `read_docs_document(document_id=...)`
 2. pass output to model summarization response step
+
+Word file workflow:
+
+1. `search_documents(query=..., include_word=True)`
+2. `get_document_metadata(file_id=...)`
+3. `.docx`:
+4. `read_word_document(file_id=...)`
+5. optional: `convert_word_to_google_doc(file_id=...)` then use native Docs tools
+6. `.doc`:
+7. `convert_word_to_google_doc(file_id=...)` first, then use native Docs tools
 
 Collaborative handoff:
 

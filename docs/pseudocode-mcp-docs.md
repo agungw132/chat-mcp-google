@@ -24,14 +24,26 @@ DEFINE token cache with expiry
 List:
   limit (1..100)
 
+Unified list:
+  limit (1..100), include_word(bool)
+
 Search:
   query (non-empty), limit (1..100)
+
+Unified search:
+  query (non-empty), limit (1..100), include_word(bool)
 
 Document ID operations:
   document_id (non-empty)
 
+Document file ID operations:
+  file_id (non-empty)
+
 Read:
   document_id, max_chars (200..50000)
+
+Word read:
+  file_id, max_chars (200..50000)
 
 Create:
   title (non-empty), initial_content (optional)
@@ -48,6 +60,9 @@ Share:
 
 Export:
   document_id, export_format(txt|html|pdf|docx), max_chars (for text formats)
+
+Word convert:
+  file_id, new_title(optional), move_to_parent(bool)
 
 Structured append:
   document_id,
@@ -143,6 +158,16 @@ FUNCTION _build_structured_append_text(input):
     bullet list lines prefixed "- "
     numbered list lines prefixed "1.", "2.", ...
   RETURN "\n\n" + composed block
+
+FUNCTION _document_query(include_word):
+  include_word=false -> native Google Docs mime only
+  include_word=true -> Google Docs OR Word .docx OR Word .doc
+
+FUNCTION _extract_docx_text(payload):
+  open .docx zip archive
+  parse word/document.xml
+  collect text runs by paragraph
+  RETURN newline-joined plain text
 ```
 
 ## 5) Tool Flows
@@ -182,6 +207,39 @@ FORMAT title, documentId, revisionId, modified time, owners, link
 RETURN metadata text
 ```
 
+## 5.3b list_documents(limit=10, include_word=True)
+
+```text
+VALIDATE input
+QUERY Drive files using _document_query(include_word)
+FORMAT each file line with type label (google_doc/word_docx/word_doc)
+RETURN list summary
+```
+
+## 5.3c search_documents(query, limit=10, include_word=True)
+
+```text
+VALIDATE input
+BUILD query from _document_query(include_word) + "name contains"
+QUERY Drive files
+FORMAT each result with type label
+RETURN search summary
+```
+
+## 5.3d get_document_metadata(file_id)
+
+```text
+VALIDATE file id
+GET Drive metadata
+IF file is native Google Doc:
+  GET Docs metadata for revision/text hint
+IF file is .docx:
+  download bytes and parse text hint with _extract_docx_text
+IF file is .doc:
+  return legacy-binary hint (convert-first workflow)
+RETURN unified metadata summary
+```
+
 ## 5.4 read_docs_document(document_id, max_chars=8000)
 
 ```text
@@ -203,6 +261,23 @@ POST /documents with title
 IF initial_content non-empty:
   POST /documents/{id}:batchUpdate with insertText at index 1
 RETURN title, document id, revision id, docs link
+```
+
+## 5.5b read_word_document(file_id, max_chars=8000)
+
+```text
+VALIDATE input
+GET Drive metadata
+IF native Google Doc:
+  return guidance to use read_docs_document
+IF .doc:
+  return guidance to convert first
+IF not .docx:
+  return unsupported mime error
+download .docx bytes
+extract plain text with _extract_docx_text
+truncate to max_chars + [Truncated]
+RETURN content summary
 ```
 
 ## 5.6 append_docs_text(document_id, text)
@@ -260,6 +335,19 @@ COMPUTE insert index
 BUILD structured text block from heading/paragraph/lists
 POST /documents/{id}:batchUpdate with insertText
 RETURN index + chars added + link
+```
+
+## 5.10b convert_word_to_google_doc(file_id, new_title='', move_to_parent=True)
+
+```text
+VALIDATE input
+GET source Drive metadata
+IF already native Google Doc:
+  RETURN already-native summary
+IF source mime not in {.docx, .doc}:
+  RETURN unsupported mime error
+POST Drive files.copy with mimeType=Google Docs
+RETURN new document id + link
 ```
 
 ## 5.11 replace_docs_text_if_revision(document_id, expected_revision_id, find_text, replace_text='', match_case=False)

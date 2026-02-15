@@ -1,5 +1,8 @@
 import os
+import zipfile
 from datetime import datetime, timedelta, timezone
+from io import BytesIO
+import xml.etree.ElementTree as ET
 
 import httpx
 from dotenv import load_dotenv
@@ -14,13 +17,15 @@ DRIVE_API_BASE = "https://www.googleapis.com/drive/v3"
 GOOGLE_OAUTH_TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token"
 HTTP_TIMEOUT = httpx.Timeout(timeout=20.0, connect=5.0)
 GOOGLE_DOC_MIME = "application/vnd.google-apps.document"
+DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+DOC_MIME = "application/msword"
 TOKEN_EXPIRY_SAFETY_MARGIN_SECONDS = 60
 DOC_SHARE_ROLES = {"reader", "commenter", "writer"}
 DOC_EXPORT_FORMATS = {
     "txt": "text/plain",
     "html": "text/html",
     "pdf": "application/pdf",
-    "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "docx": DOCX_MIME,
 }
 
 _CACHED_ACCESS_TOKEN: str | None = None
@@ -31,11 +36,24 @@ class _ListDocsInput(BaseModel):
     limit: int = Field(default=10, ge=1, le=100, strict=True)
 
 
+class _ListDocumentsInput(BaseModel):
+    limit: int = Field(default=10, ge=1, le=100, strict=True)
+    include_word: bool = True
+
+
 class _SearchDocsInput(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
     query: str = Field(min_length=1)
     limit: int = Field(default=10, ge=1, le=100, strict=True)
+
+
+class _SearchDocumentsInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    query: str = Field(min_length=1)
+    limit: int = Field(default=10, ge=1, le=100, strict=True)
+    include_word: bool = True
 
 
 class _DocumentIdInput(BaseModel):
@@ -44,10 +62,23 @@ class _DocumentIdInput(BaseModel):
     document_id: str = Field(min_length=1)
 
 
+class _DocumentFileIdInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    file_id: str = Field(min_length=1)
+
+
 class _ReadDocumentInput(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
     document_id: str = Field(min_length=1)
+    max_chars: int = Field(default=8000, ge=200, le=50000, strict=True)
+
+
+class _ReadWordDocumentInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    file_id: str = Field(min_length=1)
     max_chars: int = Field(default=8000, ge=200, le=50000, strict=True)
 
 
@@ -90,6 +121,14 @@ class _ExportDocsInput(BaseModel):
     document_id: str = Field(min_length=1)
     export_format: str = Field(default="pdf")
     max_chars: int = Field(default=8000, ge=200, le=50000, strict=True)
+
+
+class _ConvertWordToGoogleDocInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    file_id: str = Field(min_length=1)
+    new_title: str = Field(default="")
+    move_to_parent: bool = True
 
 
 class _AppendStructuredContentInput(BaseModel):
@@ -495,6 +534,65 @@ def _format_doc_line(item: dict) -> str:
     return f"- {name} | ID: {doc_id} | Modified: {modified} | Link: {link}"
 
 
+def _document_query(include_word: bool) -> str:
+    if include_word:
+        return (
+            f"(mimeType='{GOOGLE_DOC_MIME}' or mimeType='{DOCX_MIME}' or mimeType='{DOC_MIME}') "
+            "and trashed=false"
+        )
+    return f"mimeType='{GOOGLE_DOC_MIME}' and trashed=false"
+
+
+def _document_type_label(mime_type: str) -> str:
+    if mime_type == GOOGLE_DOC_MIME:
+        return "google_doc"
+    if mime_type == DOCX_MIME:
+        return "word_docx"
+    if mime_type == DOC_MIME:
+        return "word_doc"
+    return mime_type or "-"
+
+
+def _format_document_file_line(item: dict) -> str:
+    name = item.get("name", "Untitled")
+    file_id = item.get("id", "-")
+    modified = item.get("modifiedTime", "-")
+    link = item.get("webViewLink", "-")
+    mime_type = str(item.get("mimeType", "")).strip()
+    return (
+        f"- {name} | ID: {file_id} | Type: {_document_type_label(mime_type)} "
+        f"| Modified: {modified} | Link: {link}"
+    )
+
+
+def _extract_docx_text(payload: bytes) -> str:
+    namespace = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
+    try:
+        with zipfile.ZipFile(BytesIO(payload)) as zf:
+            xml_bytes = zf.read("word/document.xml")
+    except Exception as exc:
+        raise ValueError(f"Invalid .docx payload: {exc}") from exc
+
+    try:
+        root = ET.fromstring(xml_bytes)
+    except Exception as exc:
+        raise ValueError(f"Failed to parse .docx XML: {exc}") from exc
+
+    paragraphs: list[str] = []
+    for p in root.findall(".//w:p", namespace):
+        texts: list[str] = []
+        for t in p.findall(".//w:t", namespace):
+            if t.text:
+                texts.append(t.text)
+        if texts:
+            paragraphs.append("".join(texts))
+
+    if not paragraphs:
+        fallback = [t.text for t in root.findall(".//w:t", namespace) if t.text]
+        return "\n".join(fallback).strip()
+    return "\n".join(paragraphs).strip()
+
+
 @mcp.tool()
 async def list_docs_documents(limit: int = 10) -> str:
     """Lists Google Docs documents from Drive."""
@@ -558,6 +656,77 @@ async def search_docs_documents(query: str, limit: int = 10) -> str:
 
 
 @mcp.tool()
+async def list_documents(limit: int = 10, include_word: bool = True) -> str:
+    """Lists documents, optionally including Word files (.docx/.doc)."""
+    try:
+        params = _ListDocumentsInput.model_validate(
+            {"limit": limit, "include_word": include_word}
+        )
+        data, err = await _drive_get(
+            "/files",
+            params={
+                "q": _document_query(params.include_word),
+                "orderBy": "modifiedTime desc",
+                "pageSize": params.limit,
+                "fields": "files(id,name,mimeType,modifiedTime,webViewLink),nextPageToken",
+                "supportsAllDrives": "true",
+                "includeItemsFromAllDrives": "true",
+            },
+        )
+        if err:
+            return err
+        files = data.get("files", []) if data else []
+        if not files:
+            return "No document files found."
+        lines = [_format_document_file_line(item) for item in files]
+        return (
+            f"Document files (include_word={params.include_word}, showing {len(lines)}):\n"
+            + "\n".join(lines)
+        )
+    except Exception as exc:
+        return f"Error listing document files: {str(exc)}"
+
+
+@mcp.tool()
+async def search_documents(
+    query: str,
+    limit: int = 10,
+    include_word: bool = True,
+) -> str:
+    """Searches documents by name, optionally including Word files (.docx/.doc)."""
+    try:
+        params = _SearchDocumentsInput.model_validate(
+            {"query": query, "limit": limit, "include_word": include_word}
+        )
+        safe_query = _escape_query(params.query)
+        q = _document_query(params.include_word) + f" and name contains '{safe_query}'"
+        data, err = await _drive_get(
+            "/files",
+            params={
+                "q": q,
+                "orderBy": "modifiedTime desc",
+                "pageSize": params.limit,
+                "fields": "files(id,name,mimeType,modifiedTime,webViewLink),nextPageToken",
+                "supportsAllDrives": "true",
+                "includeItemsFromAllDrives": "true",
+            },
+        )
+        if err:
+            return err
+        files = data.get("files", []) if data else []
+        if not files:
+            return f"No document files found matching '{params.query}'"
+        lines = [_format_document_file_line(item) for item in files]
+        return (
+            f"Document search results for '{params.query}' "
+            f"(include_word={params.include_word}, showing {len(lines)}):\n"
+            + "\n".join(lines)
+        )
+    except Exception as exc:
+        return f"Error searching document files: {str(exc)}"
+
+
+@mcp.tool()
 async def get_docs_document_metadata(document_id: str) -> str:
     """Gets metadata for a Google Docs document."""
     try:
@@ -598,6 +767,79 @@ async def get_docs_document_metadata(document_id: str) -> str:
 
 
 @mcp.tool()
+async def get_document_metadata(file_id: str) -> str:
+    """Gets metadata for a document file (Google Docs, .docx, or .doc)."""
+    try:
+        params = _DocumentFileIdInput.model_validate({"file_id": file_id})
+        drive_data, drive_err = await _drive_get(
+            f"/files/{params.file_id}",
+            params={
+                "fields": (
+                    "id,name,mimeType,modifiedTime,size,webViewLink,"
+                    "owners(displayName,emailAddress),parents"
+                ),
+                "supportsAllDrives": "true",
+            },
+        )
+        if drive_err:
+            return drive_err
+        if not drive_data:
+            return "Document file metadata not found."
+
+        mime_type = str(drive_data.get("mimeType", "")).strip()
+        owners = drive_data.get("owners", []) if isinstance(drive_data, dict) else []
+        owners_text = ", ".join(
+            [
+                f"{owner.get('displayName', '-') } <{owner.get('emailAddress', '-')}>"
+                for owner in owners
+                if isinstance(owner, dict)
+            ]
+        ) or "-"
+
+        revision_id = "-"
+        content_hint = "-"
+        if mime_type == GOOGLE_DOC_MIME:
+            doc_data, doc_err = await _docs_get(f"/documents/{params.file_id}")
+            if doc_err:
+                content_hint = f"warning: {doc_err}"
+            else:
+                revision_id = str((doc_data or {}).get("revisionId", "-"))
+                text = _extract_document_text(doc_data or {})
+                content_hint = f"text_length={len(text)}"
+        elif mime_type == DOCX_MIME:
+            payload, bytes_err = await _drive_get_bytes(
+                f"/files/{params.file_id}",
+                params={"alt": "media", "supportsAllDrives": "true"},
+            )
+            if bytes_err or payload is None:
+                content_hint = f"warning: {bytes_err or 'unable to read .docx bytes'}"
+            else:
+                try:
+                    text = _extract_docx_text(payload)
+                    content_hint = f"text_length={len(text)}"
+                except Exception as exc:
+                    content_hint = f"warning: {exc}"
+        elif mime_type == DOC_MIME:
+            content_hint = "binary .doc legacy format (direct text extraction not supported)"
+
+        return (
+            "Document Metadata:\n"
+            f"File ID: {drive_data.get('id', params.file_id)}\n"
+            f"Name: {drive_data.get('name', '-')}\n"
+            f"Type: {_document_type_label(mime_type)}\n"
+            f"MIME Type: {mime_type or '-'}\n"
+            f"Revision ID: {revision_id}\n"
+            f"Modified: {drive_data.get('modifiedTime', '-')}\n"
+            f"Size: {drive_data.get('size', '-')}\n"
+            f"Owners: {owners_text}\n"
+            f"Link: {drive_data.get('webViewLink', '-')}\n"
+            f"Content Hint: {content_hint}"
+        )
+    except Exception as exc:
+        return f"Error getting document metadata: {str(exc)}"
+
+
+@mcp.tool()
 async def read_docs_document(document_id: str, max_chars: int = 8000) -> str:
     """Reads plain text content from a Google Docs document."""
     try:
@@ -617,6 +859,66 @@ async def read_docs_document(document_id: str, max_chars: int = 8000) -> str:
         return f"Google Docs Content: {title}\n\n{text}"
     except Exception as exc:
         return f"Error reading Google Docs document: {str(exc)}"
+
+
+@mcp.tool()
+async def read_word_document(file_id: str, max_chars: int = 8000) -> str:
+    """Reads text from a Word .docx file stored in Drive."""
+    try:
+        params = _ReadWordDocumentInput.model_validate(
+            {"file_id": file_id, "max_chars": max_chars}
+        )
+        meta, meta_err = await _drive_get(
+            f"/files/{params.file_id}",
+            params={"fields": "id,name,mimeType,webViewLink", "supportsAllDrives": "true"},
+        )
+        if meta_err:
+            return meta_err
+        if not meta:
+            return "Document file not found."
+
+        mime_type = str(meta.get("mimeType", "")).strip()
+        if mime_type == GOOGLE_DOC_MIME:
+            return (
+                "File is a native Google Docs document. "
+                "Use read_docs_document(document_id=...) for this file."
+            )
+        if mime_type == DOC_MIME:
+            return (
+                "Legacy .doc format cannot be read directly. "
+                "Use convert_word_to_google_doc(file_id=...) first, then read_docs_document."
+            )
+        if mime_type != DOCX_MIME:
+            return (
+                f"File MIME type '{mime_type or '-'}' is not supported by read_word_document. "
+                f"Expected '{DOCX_MIME}' or '{DOC_MIME}'."
+            )
+
+        payload, bytes_err = await _drive_get_bytes(
+            f"/files/{params.file_id}",
+            params={"alt": "media", "supportsAllDrives": "true"},
+        )
+        if bytes_err:
+            return bytes_err
+        if payload is None:
+            return "Failed to download .docx file bytes."
+
+        text = _extract_docx_text(payload)
+        if not text:
+            return f"Word document '{meta.get('name', params.file_id)}' is empty."
+        if len(text) > params.max_chars:
+            text = text[: params.max_chars].rstrip() + "\n\n[Truncated]"
+
+        return (
+            "Word Document Content:\n"
+            f"File ID: {params.file_id}\n"
+            f"File Name: {meta.get('name', '-')}\n"
+            f"Type: {_document_type_label(mime_type)}\n"
+            f"Link: {meta.get('webViewLink', '-')}\n\n"
+            f"{text}"
+        )
+    except Exception as exc:
+        return f"Error reading Word document: {str(exc)}"
 
 
 @mcp.tool()
@@ -902,6 +1204,82 @@ async def export_docs_document(
         )
     except Exception as exc:
         return f"Error exporting Google Docs document: {str(exc)}"
+
+
+@mcp.tool()
+async def convert_word_to_google_doc(
+    file_id: str,
+    new_title: str = "",
+    move_to_parent: bool = True,
+) -> str:
+    """Converts an existing Word file (.docx/.doc) into a native Google Docs file."""
+    try:
+        params = _ConvertWordToGoogleDocInput.model_validate(
+            {"file_id": file_id, "new_title": new_title, "move_to_parent": move_to_parent}
+        )
+        src_meta, src_err = await _drive_get(
+            f"/files/{params.file_id}",
+            params={
+                "fields": "id,name,mimeType,parents,webViewLink",
+                "supportsAllDrives": "true",
+            },
+        )
+        if src_err:
+            return src_err
+        if not src_meta:
+            return "Source file not found."
+
+        source_mime = str(src_meta.get("mimeType", "")).strip()
+        if source_mime == GOOGLE_DOC_MIME:
+            return (
+                "File is already a native Google Docs document.\n"
+                f"Document ID: {src_meta.get('id', params.file_id)}\n"
+                f"Link: {src_meta.get('webViewLink', '-')}"
+            )
+        if source_mime not in {DOCX_MIME, DOC_MIME}:
+            return (
+                f"Source file MIME '{source_mime or '-'}' is not supported for conversion. "
+                f"Expected '{DOCX_MIME}' or '{DOC_MIME}'."
+            )
+
+        source_name = str(src_meta.get("name", "Untitled")).strip() or "Untitled"
+        title = params.new_title.strip()
+        if not title:
+            lowered = source_name.lower()
+            if lowered.endswith(".docx"):
+                title = source_name[:-5]
+            elif lowered.endswith(".doc"):
+                title = source_name[:-4]
+            else:
+                title = source_name
+
+        parents = src_meta.get("parents", []) if isinstance(src_meta, dict) else []
+        copy_body: dict = {"name": title, "mimeType": GOOGLE_DOC_MIME}
+        if params.move_to_parent and isinstance(parents, list) and parents:
+            copy_body["parents"] = parents
+
+        copied, copy_err = await _drive_post_json(
+            f"/files/{params.file_id}/copy",
+            params={"supportsAllDrives": "true"},
+            json_body=copy_body,
+        )
+        if copy_err:
+            return copy_err
+        if not copied or not copied.get("id"):
+            return "Failed to convert Word file to Google Docs."
+
+        new_id = copied.get("id")
+        return (
+            "Word to Google Docs conversion completed:\n"
+            f"Source File ID: {params.file_id}\n"
+            f"Source Name: {source_name}\n"
+            f"Source Type: {_document_type_label(source_mime)}\n"
+            f"Document ID: {new_id}\n"
+            f"Document Name: {copied.get('name', title)}\n"
+            f"Link: https://docs.google.com/document/d/{new_id}/edit"
+        )
+    except Exception as exc:
+        return f"Error converting Word file to Google Docs: {str(exc)}"
 
 
 @mcp.tool()

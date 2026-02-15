@@ -15,6 +15,8 @@ dependencies = [
     "vobject>=0.9.9",
     "google-genai>=1.0.0",
     "pydantic>=2.10.6",
+    "openpyxl>=3.1.5",
+    "xlrd>=2.0.1",
 ]
 
 [tool.pytest.ini_options]

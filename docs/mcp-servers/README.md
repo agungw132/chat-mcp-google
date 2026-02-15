@@ -9,6 +9,7 @@ These documents are written for a calling/orchestrating agent (for example `chat
 - `docs/mcp-servers/contacts.md`
 - `docs/mcp-servers/drive.md`
 - `docs/mcp-servers/docs.md`
+- `docs/mcp-servers/sheets.md`
 - `docs/mcp-servers/maps.md`
 
 ## How to use this set
@@ -27,6 +28,7 @@ These documents are written for a calling/orchestrating agent (for example `chat
 - Contact lookup -> `contacts`
 - File/storage/sharing -> `drive`
 - Document authoring/editing -> `docs`
+- Spreadsheet operations -> `sheets`
 - Address/place/directions -> `maps`
 
 Common multi-server patterns:
@@ -39,5 +41,17 @@ Common multi-server patterns:
 - `drive.search_drive_files` -> `drive.create_drive_shared_link_to_user`
 - Create and refine Google Doc:
 - `docs.create_docs_document` -> `docs.append_docs_structured_content` -> `docs.replace_docs_text_if_revision` -> `docs.share_docs_to_user`
+- Word file to Docs workflow:
+- `docs.search_documents(include_word=True)` -> `docs.get_document_metadata` -> `docs.read_word_document` (for `.docx`) / `docs.convert_word_to_google_doc` (for `.doc` or conversion-first workflow)
+- Create and update Google Sheet:
+- `sheets.create_sheets_spreadsheet` -> `sheets.add_sheet_tab` -> `sheets.append_sheet_row` -> `sheets.update_sheet_values`
+- Batch update spreadsheet ranges:
+- `sheets.batch_get_sheet_values` -> `sheets.batch_update_sheet_values`
+- Read and convert Excel file:
+- `sheets.search_spreadsheets(include_excel=True)` -> `sheets.read_excel_values` -> `sheets.convert_excel_to_google_sheet` (optional)
+- Export and share spreadsheet:
+- `sheets.export_google_sheet` -> `sheets.share_spreadsheet`
+- Template-to-report spreadsheet flow:
+- `sheets.create_spreadsheet_from_template` -> `sheets.import_csv_to_sheet` -> `sheets.create_pivot_table` -> `sheets.insert_sheet_chart`
 - Find place then route:
 - `maps.search_places_text` -> `maps.get_place_details` -> `maps.get_directions`

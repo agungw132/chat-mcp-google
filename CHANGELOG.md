@@ -4,9 +4,53 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- Added Google Docs Word interoperability tools:
+  - `list_documents` (native Docs + optional `.docx/.doc`)
+  - `search_documents` (native Docs + optional `.docx/.doc`)
+  - `get_document_metadata` (unified metadata for Docs/Word)
+  - `read_word_document` (direct `.docx` read)
+  - `convert_word_to_google_doc` (`.docx/.doc` -> native Docs)
+- Added Google Sheets phase-2 tools:
+  - `export_google_sheet` (`xlsx`, `ods`, `pdf`, `zip`, `csv`, `tsv`)
+  - `batch_get_sheet_values`
+  - `batch_update_sheet_values`
+  - `share_spreadsheet`
+  - `create_spreadsheet_from_template`
+  - `import_csv_to_sheet`
+  - `insert_sheet_chart`
+  - `protect_sheet_or_range`
+  - `create_pivot_table`
+  - `get_spreadsheet_permissions`
+- Added unit/smoke coverage for Sheets phase-2 tools.
+
+### Changed
+- Extended Docs intent keywords and system instruction guidance for Word (`.docx/.doc`) workflows.
+- Extended Sheets intent keywords in chat orchestration for export/batch/share prompts.
+- Updated Google Sheets system instruction guidance for export, batch operations, and sharing workflows.
+- Updated MCP onboarding runbook/checklist to explicitly support extending existing MCP servers by phase.
+- Updated README and `docs/` documentation for Sheets phase-2 and Docs Word-interoperability capabilities and usage patterns.
+
 ## [1.2.1] - 2026-02-14
 
 ### Added
+- Added new Google Sheets MCP server (phase 1) with tools:
+  - `list_sheets_spreadsheets`
+  - `search_sheets_spreadsheets`
+  - `get_sheets_metadata`
+  - `read_sheet_values`
+  - `append_sheet_row`
+  - `update_sheet_values`
+  - `create_sheets_spreadsheet`
+  - `add_sheet_tab`
+  - `list_spreadsheets` (native + optional `.xlsx`)
+  - `search_spreadsheets` (native + optional `.xlsx`)
+  - `get_spreadsheet_metadata` (native + `.xlsx`)
+  - `read_excel_values` (direct `.xlsx` read)
+  - `convert_excel_to_google_sheet`
+- Added root wrapper entrypoint: `sheets_server.py`.
+- Added Sheets unit and smoke tests.
+- Added Sheets pseudocode and agent-oriented documentation.
 - Added Google Docs MCP phase 1.1 tools:
   - `share_docs_to_user`
   - `export_docs_document`
@@ -14,6 +58,12 @@ All notable changes to this project will be documented in this file.
   - `replace_docs_text_if_revision`
 
 ### Changed
+- Removed unsupported non-Gemini chat models from app model list:
+  - `glm-5` (invalid model at endpoint)
+  - `whisper-1` (not chat-completions capable)
+- Integrated Sheets MCP into server registry, intent routing keywords, and runtime MCP policy doc mapping.
+- Updated UI caption and README architecture/tooling docs to include Sheets MCP.
+- Updated `.env.template` and README token guidance for Drive/Docs/Sheets shared OAuth token flow.
 - Extended Docs intent keywords in chat orchestration for sharing/export/revision-safe workflows.
 - Updated Docs MCP documentation and pseudocode for phase 1.1 behavior and constraints.
 

@@ -1,6 +1,23 @@
 import pytest
+from io import BytesIO
+import zipfile
 
 from chat_google.mcp_servers import docs_server
+
+
+def _build_docx_bytes(text: str = "Hello from docx\nSecond line") -> bytes:
+    xml = f"""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:body>
+    <w:p><w:r><w:t>{text.splitlines()[0]}</w:t></w:r></w:p>
+    <w:p><w:r><w:t>{text.splitlines()[-1]}</w:t></w:r></w:p>
+  </w:body>
+</w:document>
+"""
+    buf = BytesIO()
+    with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("word/document.xml", xml)
+    return buf.getvalue()
 
 
 def test_get_access_token_missing(monkeypatch):
@@ -272,3 +289,125 @@ async def test_replace_docs_text_if_revision_mismatch(monkeypatch):
     )
     assert "Revision mismatch. No changes applied." in result
     assert "Current Revision ID: rev-current" in result
+
+
+@pytest.mark.asyncio
+async def test_list_documents_include_word(monkeypatch):
+    async def fake_drive_get(path, params=None):
+        assert path == "/files"
+        assert "application/msword" in params["q"]
+        assert "wordprocessingml.document" in params["q"]
+        return (
+            {
+                "files": [
+                    {
+                        "id": "w1",
+                        "name": "Spec.docx",
+                        "mimeType": docs_server.DOCX_MIME,
+                        "modifiedTime": "2026-02-14T09:00:00Z",
+                        "webViewLink": "https://drive.google.com/file/d/w1/view",
+                    }
+                ]
+            },
+            None,
+        )
+
+    monkeypatch.setattr(docs_server, "_drive_get", fake_drive_get)
+    result = await docs_server.list_documents(limit=1, include_word=True)
+    assert "Document files (include_word=True, showing 1):" in result
+    assert "Type: word_docx" in result
+
+
+@pytest.mark.asyncio
+async def test_get_document_metadata_docx(monkeypatch):
+    async def fake_drive_get(path, params=None):
+        assert path == "/files/w1"
+        return (
+            {
+                "id": "w1",
+                "name": "Spec.docx",
+                "mimeType": docs_server.DOCX_MIME,
+                "modifiedTime": "2026-02-14T09:00:00Z",
+                "size": "2345",
+                "webViewLink": "https://drive.google.com/file/d/w1/view",
+                "owners": [{"displayName": "Alice", "emailAddress": "alice@example.com"}],
+            },
+            None,
+        )
+
+    async def fake_drive_get_bytes(path, params=None):
+        return _build_docx_bytes("Alpha\nBeta"), None
+
+    monkeypatch.setattr(docs_server, "_drive_get", fake_drive_get)
+    monkeypatch.setattr(docs_server, "_drive_get_bytes", fake_drive_get_bytes)
+    result = await docs_server.get_document_metadata("w1")
+    assert "Document Metadata:" in result
+    assert "Type: word_docx" in result
+    assert "Content Hint: text_length=" in result
+
+
+@pytest.mark.asyncio
+async def test_read_word_document_docx(monkeypatch):
+    async def fake_drive_get(path, params=None):
+        return (
+            {
+                "id": "w1",
+                "name": "Spec.docx",
+                "mimeType": docs_server.DOCX_MIME,
+                "webViewLink": "https://drive.google.com/file/d/w1/view",
+            },
+            None,
+        )
+
+    async def fake_drive_get_bytes(path, params=None):
+        return _build_docx_bytes("Alpha\nBeta"), None
+
+    monkeypatch.setattr(docs_server, "_drive_get", fake_drive_get)
+    monkeypatch.setattr(docs_server, "_drive_get_bytes", fake_drive_get_bytes)
+    result = await docs_server.read_word_document("w1", max_chars=500)
+    assert "Word Document Content:" in result
+    assert "Alpha" in result
+    assert "Beta" in result
+
+
+@pytest.mark.asyncio
+async def test_read_word_document_doc_returns_guidance(monkeypatch):
+    async def fake_drive_get(path, params=None):
+        return (
+            {
+                "id": "d1",
+                "name": "Legacy.doc",
+                "mimeType": docs_server.DOC_MIME,
+                "webViewLink": "https://drive.google.com/file/d/d1/view",
+            },
+            None,
+        )
+
+    monkeypatch.setattr(docs_server, "_drive_get", fake_drive_get)
+    result = await docs_server.read_word_document("d1")
+    assert "Legacy .doc format cannot be read directly." in result
+
+
+@pytest.mark.asyncio
+async def test_convert_word_to_google_doc(monkeypatch):
+    async def fake_drive_get(path, params=None):
+        return (
+            {
+                "id": "w1",
+                "name": "Spec.docx",
+                "mimeType": docs_server.DOCX_MIME,
+                "parents": ["folder-a"],
+            },
+            None,
+        )
+
+    async def fake_drive_post_json(path, params=None, json_body=None):
+        assert path == "/files/w1/copy"
+        assert json_body["mimeType"] == docs_server.GOOGLE_DOC_MIME
+        return {"id": "doc-new", "name": "Spec"}, None
+
+    monkeypatch.setattr(docs_server, "_drive_get", fake_drive_get)
+    monkeypatch.setattr(docs_server, "_drive_post_json", fake_drive_post_json)
+    result = await docs_server.convert_word_to_google_doc("w1")
+    assert "Word to Google Docs conversion completed:" in result
+    assert "Document ID: doc-new" in result

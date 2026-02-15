@@ -13,6 +13,7 @@ Chat app berbasis Gradio yang terhubung ke MCP server:
 - Google Contacts
 - Google Drive
 - Google Docs
+- Google Sheets
 - Google Maps
 
 Mendukung:
@@ -50,6 +51,11 @@ uv run python app.py
   - `GOOGLE_OAUTH_CLIENT_SECRET`
 - Gunakan script `get_google_drive_access_token.py` untuk isi access token + refresh token + OAuth client credentials sekaligus.
 - Untuk Google Maps, lihat `README.md` section `How to Get GOOGLE_MAPS_API_KEY and Required APIs`.
+- Untuk Google Sheets, lihat `README.md` section `Google Docs and Sheets API Setup Notes`.
+- MCP Sheets sekarang mendukung baca `.xlsx/.xls` langsung (`read_excel_values`) dan konversi `.xlsx/.xls` ke Google Sheets (`convert_excel_to_google_sheet`).
+- MCP Sheets fase lanjut menambah export (`export_google_sheet`), batch read/write (`batch_get_sheet_values`, `batch_update_sheet_values`), dan sharing (`share_spreadsheet`).
+- MCP Sheets sekarang juga mendukung template copy, import CSV, chart insertion, range protection, pivot table creation, dan permission audit.
+- MCP Docs sekarang mendukung interop Word: list/search `.docx/.doc`, metadata unified, baca `.docx` langsung, dan konversi Word ke native Google Docs.
 - API minimal yang harus aktif: `Geocoding API`, `Directions API`, `Places API`.
 - Tersedia script programatik: `get_google_maps_api_key.py` (lihat contoh command di `README.md`).
 
@@ -59,9 +65,10 @@ uv run python app.py
 2. Error non-Gemini (`500`/timeout): cek `BASE_URL` dan `API_KEY`, lalu coba prompt lebih sempit jika sering timeout.
 3. Invite tidak terkirim: gunakan kata `invite` + email di prompt, lalu cek `chat_app.log`/`metrics.jsonl` apakah `send_calendar_invite_email` atau `send_email` terpanggil.
 4. Drive `401/403`: cek `GOOGLE_DRIVE_ACCESS_TOKEN`/refresh config valid, dan scope token mencakup `https://www.googleapis.com/auth/drive`.
-5. Maps gagal: cek `GOOGLE_MAPS_API_KEY` valid dan Maps APIs sudah di-enable di Google Cloud.
-6. Gmail/Calendar/Contacts gagal login: cek `GOOGLE_ACCOUNT` dan `GOOGLE_APP_KEY`, pastikan 2-Step Verification + App Password sudah aktif.
-7. Muncul warning MCP server unavailable: cek `chat_app.log` (`Failed to start MCP server`), jalankan server terkait manual, lalu retry query.
+5. Sheets `401/403`: pastikan Google Sheets API aktif di project GCP yang sama, token valid, dan akun punya akses ke spreadsheet.
+6. Maps gagal: cek `GOOGLE_MAPS_API_KEY` valid dan Maps APIs sudah di-enable di Google Cloud.
+7. Gmail/Calendar/Contacts gagal login: cek `GOOGLE_ACCOUNT` dan `GOOGLE_APP_KEY`, pastikan 2-Step Verification + App Password sudah aktif.
+8. Muncul warning MCP server unavailable: cek `chat_app.log` (`Failed to start MCP server`), jalankan server terkait manual, lalu retry query.
 
 ## Referensi Lengkap
 
@@ -70,3 +77,4 @@ Untuk daftar tools, arsitektur, troubleshooting, dan changelog terbaru, lihat:
 - `CHANGELOG.md`
 - `docs/mcp-servers/README.md` (panduan per MCP untuk calling agent)
 - `docs/mcp-servers/docs.md` (panduan MCP Google Docs)
+- `docs/mcp-servers/sheets.md` (panduan MCP Google Sheets)

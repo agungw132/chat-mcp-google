@@ -20,14 +20,16 @@ async def test_chat_empty_message():
     assert outputs == [[{"role": "user", "content": "x"}]]
 
 
-def test_get_servers_config_includes_drive_docs_and_maps():
+def test_get_servers_config_includes_drive_docs_sheets_and_maps():
     names = [cfg.name for cfg in chat_service.get_servers_config()]
     scripts = [cfg.script for cfg in chat_service.get_servers_config()]
     assert "drive" in names
     assert "docs" in names
+    assert "sheets" in names
     assert "maps" in names
     assert "drive_server.py" in scripts
     assert "docs_server.py" in scripts
+    assert "sheets_server.py" in scripts
     assert "maps_server.py" in scripts
 
 
@@ -1146,6 +1148,41 @@ def test_infer_requested_servers_docs_phase_1_1_keywords():
         "share this document and export to docx with revision-safe replace"
     )
     assert "docs" in servers
+
+
+def test_infer_requested_servers_docs_word_keywords():
+    servers = chat_service._infer_requested_servers(
+        "list word document files and convert to google doc"
+    )
+    assert "docs" in servers
+
+
+def test_infer_requested_servers_sheets_keywords():
+    servers = chat_service._infer_requested_servers(
+        "create spreadsheet for budget, add tab Q2, then append row with values"
+    )
+    assert "sheets" in servers
+
+
+def test_infer_requested_servers_sheets_phase_2_keywords():
+    servers = chat_service._infer_requested_servers(
+        "export spreadsheet to csv and batch update cells before share spreadsheet"
+    )
+    assert "sheets" in servers
+
+
+def test_infer_requested_servers_sheets_advanced_keywords():
+    servers = chat_service._infer_requested_servers(
+        "copy template spreadsheet, import csv, create pivot and protect range permissions"
+    )
+    assert "sheets" in servers
+
+
+def test_infer_requested_servers_sheets_xls_keywords():
+    servers = chat_service._infer_requested_servers(
+        "list my xls files and convert to google sheet"
+    )
+    assert "sheets" in servers
 
 
 def test_build_tool_result_contract_prefers_structured_error():

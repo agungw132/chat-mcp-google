@@ -7,6 +7,7 @@ Reference runbook:
 
 ## A) Scope and Planning
 
+- [ ] Decide track: brand-new MCP server or phase extension of an existing server.
 - [ ] Define phase (`phase 1`, `phase 1.1`) and out-of-scope items.
 - [ ] Propose tool list and get approval before implementation.
 - [ ] Confirm expected behavior for ambiguous intents (for example invite behavior).
@@ -25,6 +26,7 @@ Reference runbook:
 
 - [ ] Add implementation file: `src/chat_google/mcp_servers/<name>_server.py`.
 - [ ] Add wrapper entrypoint: `<name>_server.py`.
+- [ ] If extending existing server only: keep server/wrapper registration unchanged unless required.
 - [ ] Implement and validate all approved tools.
 - [ ] Standardize error outputs with actionable hints.
 

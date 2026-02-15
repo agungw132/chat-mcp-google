@@ -8,13 +8,14 @@ This analysis is based on:
 - `docs/pseudocode-mcp-contacts.md`
 - `docs/pseudocode-mcp-drive.md`
 - `docs/pseudocode-mcp-docs.md`
+- `docs/pseudocode-mcp-sheets.md`
 - `docs/pseudocode-mcp-maps.md`
 
 ## 1) Notation
 
 - `H`: number of chat history messages
 - `X`: total normalized text size across `history + user message`
-- `S`: number of MCP servers (currently 6)
+- `S`: number of MCP servers (currently 7)
 - `T`: total number of discovered MCP tools (across all servers)
 - `R`: number of tool-calling rounds in one model request
 - `C`: total tool calls in one request
@@ -168,10 +169,16 @@ Largest recurring overhead is repeated MCP session bootstrap (`uv run python <se
 
 - `list_docs_documents(limit=L)`: `O(L)` formatting on Drive list results.
 - `search_docs_documents(limit=L)`: `O(L)` formatting on search results.
+- `list_documents(limit=L, include_word=...)`: `O(L)` formatting on unified (Docs + Word) list results.
+- `search_documents(limit=L, include_word=...)`: `O(L)` formatting on unified search results.
 - `get_docs_document_metadata(document_id)`:
 - Docs fetch `O(1)` + Drive metadata fetch `O(1)`.
+- `get_document_metadata(file_id)`:
+- Drive metadata fetch `O(1)`, plus optional Docs fetch `O(1)` for native docs or `.docx` bytes parse `O(B)` for word files.
 - `read_docs_document(document_id, max_chars)`:
 - Docs fetch + body traversal `O(N)` on document structural elements, truncation bounded by `max_chars`.
+- `read_word_document(file_id, max_chars)`:
+- `.docx` download + XML parse `O(B)`, with truncation bounded by `max_chars`; `.doc` path is constant-time guidance.
 - `create_docs_document(title, initial_content)`:
 - create call `O(1)` + optional initial insert `O(|initial_content|)`.
 - `append_docs_text(document_id, text)`:
@@ -186,6 +193,8 @@ Largest recurring overhead is repeated MCP session bootstrap (`uv run python <se
 - build structured block `O(K)` (sum of item lengths) + append path `O(N + K)`.
 - `replace_docs_text_if_revision(...)`:
 - revision fetch `O(1)` + conditional replace batch update `O(1)` request count (backend-dependent processing).
+- `convert_word_to_google_doc(file_id, ...)`:
+- metadata lookup + Drive copy conversion `O(1)` request count.
 
 ## 7.2 Bottleneck notes
 
@@ -193,6 +202,7 @@ Largest recurring overhead is repeated MCP session bootstrap (`uv run python <se
 - Repeated write operations in separate tool calls (create -> append -> replace) add network round trips.
 - Exporting large docs to text/binary increases payload transfer time (`O(B)`).
 - Revision-safe writes add one extra pre-check call but reduce race-condition risk.
+- Direct `.docx` read is bandwidth-sensitive (`O(B)` download + parse).
 
 ## 8) Maps MCP Complexity
 
@@ -211,9 +221,66 @@ Largest recurring overhead is repeated MCP session bootstrap (`uv run python <se
 - Directions complexity depends on number of returned route legs; inter-city routes with many legs increase parsing work.
 - Most latency is external API/network, not local CPU.
 
-## 9) End-to-End Hotspots (Priority Order)
+## 9) Sheets MCP Complexity
 
-## 9.1 P0 (Implemented) - Intent-based tool gating + MCP policy injection
+## 9.1 Tool complexity summary
+
+- `list_sheets_spreadsheets(limit=L)`: `O(L)` formatting on Drive file results.
+- `search_sheets_spreadsheets(limit=L)`: `O(L)` formatting on search results.
+- `get_sheets_metadata(spreadsheet_id)`: `O(Tabs)` where `Tabs` is sheet-tab count in metadata payload.
+- `read_sheet_values(spreadsheet_id, range_a1, max_rows, max_cols)`:
+- value retrieval bounded by requested range size from Sheets API.
+- local formatting cost is `O(min(Rows, max_rows) * min(Cols, max_cols))`.
+- `append_sheet_row(...)`: `O(C)` where `C` is appended cell count in a single row (usually small) plus constant metadata call.
+- `update_sheet_values(...)`: `O(R*C)` for local normalization of provided 2D payload plus one update request.
+- `create_sheets_spreadsheet(...)`: `O(1)` request/formatting.
+- `add_sheet_tab(...)`: `O(1)` request/formatting.
+- `list_spreadsheets(limit=L, include_excel=...)`: `O(L)` formatting on mixed spreadsheet file results.
+- `search_spreadsheets(limit=L, include_excel=...)`: `O(L)` formatting on mixed search results.
+- `get_spreadsheet_metadata(file_id)`:
+- native Sheets: `O(Tabs)` tab extraction
+- `.xlsx/.xls`: `O(B)` to download workbook bytes + `O(Tabs)` to enumerate sheet names.
+- `read_excel_values(file_id, ..., max_rows, max_cols)`:
+- download and workbook load cost `O(B)` where `B` is file bytes
+- extraction/formatting cost bounded by `O(max_rows * max_cols)`.
+- `convert_excel_to_google_sheet(file_id, ...)`:
+- copy-based conversion path: `O(1)` request count
+- upload fallback path: `O(B)` transfer for source bytes and multipart upload.
+- `export_google_sheet(file_id, export_format, ...)`:
+- text export (`csv`/`tsv`): `O(E)` where `E` is exported text size, with preview truncation bounded by `max_preview_chars`.
+- binary export (`xlsx`/`ods`/`pdf`/`zip`): `O(E)` payload transfer, local processing is `O(1)` metadata formatting.
+- `batch_get_sheet_values(spreadsheet_id, ranges=R, ...)`:
+- one API request; local formatting is `O(sum(cells_shown_per_range))` bounded by `R * max_rows_per_range * max_cols_per_row`.
+- `batch_update_sheet_values(spreadsheet_id, updates=U)`:
+- normalization + payload construction `O(total_input_cells)`, single API request, response formatting `O(U)`.
+- `share_spreadsheet(file_id, ...)`:
+- metadata lookup + permission create: `O(1)` request count.
+- `create_spreadsheet_from_template(...)`:
+- template metadata + copy + copied metadata lookup: `O(1)` request count.
+- `import_csv_to_sheet(..., csv_text)`:
+- CSV parse + normalization `O(R*C)` for input matrix size, plus 1 clear request (optional) and 1 update request.
+- `insert_sheet_chart(...)`:
+- one batchUpdate request, local payload normalization `O(1)` relative to chart spec size.
+- `protect_sheet_or_range(...)`:
+- metadata lookup + optional A1 parse `O(1)` + one batchUpdate request.
+- `create_pivot_table(...)`:
+- sheet mapping lookup `O(Tabs)` + A1 parse `O(1)` + one batchUpdate request.
+- `get_spreadsheet_permissions(file_id)`:
+- metadata request + permissions listing `O(P)` where `P` is permission count returned.
+
+## 9.2 Bottleneck notes
+
+- Wide ranges can return large payloads quickly; always bound range and display limits.
+- Frequent write operations in separate calls increase round-trip latency.
+- Direct `.xlsx/.xls` flows are bandwidth-sensitive because full workbook bytes are downloaded.
+- Exporting large sheets to binary/text is bandwidth-sensitive (`O(E)` transfer).
+- Batch read/write tools reduce request count for multi-range operations and usually improve wall-clock latency vs repeated single-range calls.
+- CSV import scales with provided CSV payload size (`O(R*C)` normalization before request).
+- Permission audits scale linearly with permission entries returned (`O(P)` formatting).
+
+## 10) End-to-End Hotspots (Priority Order)
+
+## 10.1 P0 (Implemented) - Intent-based tool gating + MCP policy injection
 
 - Implemented:
 - infer requested server domains from prompt text
@@ -224,7 +291,7 @@ Largest recurring overhead is repeated MCP session bootstrap (`uv run python <se
 - typically reduces LLM tool-schema payload size from `T` to `T'`
 - Expected impact: lower prompt/tool-selection noise, lower model latency, and better tool precision.
 
-## 9.2 P1 - Reuse MCP sessions across chat requests
+## 10.2 P1 - Reuse MCP sessions across chat requests
 
 Current behavior starts and initializes all servers for every request.
 
@@ -234,7 +301,7 @@ Current behavior starts and initializes all servers for every request.
 - Reconnect only on failure.
 - Expected impact: significant latency reduction per chat turn.
 
-## 9.3 P1 - Optimize Contacts `search_contacts` fallback path
+## 10.3 P1 - Optimize Contacts `search_contacts` fallback path
 
 - Current worst case `O(F)` with many GET calls even when only top 1-5 matches needed.
 - Improvement options:
@@ -243,7 +310,7 @@ Current behavior starts and initializes all servers for every request.
 - Stop fetching as soon as enough high-confidence matches found.
 - Expected impact: major reduction for large address books.
 
-## 9.4 P1 - Parallelize independent tool calls in a round
+## 10.4 P1 - Parallelize independent tool calls in a round
 
 - Current execution is sequential per tool call.
 - Improvement:
@@ -253,7 +320,7 @@ Current behavior starts and initializes all servers for every request.
 - session/client thread-safety is guaranteed (or separated by server/session).
 - Expected impact: lower round latency when model emits multiple independent calls.
 
-## 9.5 P2 - Cap context growth in multi-round orchestration
+## 10.5 P2 - Cap context growth in multi-round orchestration
 
 - Repeatedly appending tool outputs can increase request payload size across rounds.
 - Improvement:
@@ -261,14 +328,14 @@ Current behavior starts and initializes all servers for every request.
 - Keep only latest relevant turns + structured memory summary.
 - Expected impact: reduced model latency/cost and lower timeout probability.
 
-## 9.6 P2 - Stream/truncate Drive file reads earlier
+## 10.6 P2 - Stream/truncate Drive file reads earlier
 
 - `read_drive_text_file` downloads full content before truncation.
 - Improvement:
 - Use ranged reads/streaming and stop after `max_chars` threshold when feasible.
 - Expected impact: better performance on large files.
 
-## 9.7 P2 - Reduce unnecessary sorting in Calendar lists
+## 10.7 P2 - Reduce unnecessary sorting in Calendar lists
 
 - `sorted(results)` introduces `O(N log N)`.
 - Improvement:
@@ -276,7 +343,7 @@ Current behavior starts and initializes all servers for every request.
 - or request sorted order upstream.
 - Expected impact: moderate CPU savings for larger event sets.
 
-## 9.8 P3 - Batch IMAP fetch patterns in Gmail tools
+## 10.8 P3 - Batch IMAP fetch patterns in Gmail tools
 
 - Several tools fetch message headers one-by-one.
 - Improvement:
@@ -284,7 +351,7 @@ Current behavior starts and initializes all servers for every request.
 - Minimize repeated mailbox select calls.
 - Expected impact: moderate latency reduction for larger `count` values.
 
-## 9.9 P3 - Add response caching for frequent Maps lookups
+## 10.9 P3 - Add response caching for frequent Maps lookups
 
 - Repeated geocode/place details for the same query can trigger duplicate API calls.
 - Improvement:
@@ -296,7 +363,7 @@ Current behavior starts and initializes all servers for every request.
 - `get_directions`: (`origin`,`destination`,`mode`,`alternatives`,`units`)
 - Expected impact: lower cost and faster responses on repeated lookups.
 
-## 10) Suggested Implementation Roadmap
+## 11) Suggested Implementation Roadmap
 
 ## Phase A (highest ROI)
 
@@ -316,7 +383,7 @@ Current behavior starts and initializes all servers for every request.
 1. Gmail fetch batching refinements.
 2. Additional perf telemetry (per-step timing, cache hit rate, queue depth).
 
-## 11) Optional Metrics to Track After Improvements
+## 12) Optional Metrics to Track After Improvements
 
 - `mcp_session_init_ms` and session reuse ratio
 - `tool_round_count` and `tool_call_count`

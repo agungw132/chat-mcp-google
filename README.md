@@ -7,12 +7,13 @@
 ![Validation: Pydantic](https://img.shields.io/badge/validation-Pydantic-E92063)
 ![Tests: pytest](https://img.shields.io/badge/tests-pytest-22c55e)
 
-A production-oriented Gradio chat application that integrates LLM tool-calling with six Google-focused MCP servers:
+A production-oriented Gradio chat application that integrates LLM tool-calling with seven Google-focused MCP servers:
 - Gmail (IMAP/SMTP)
 - Google Calendar (CalDAV)
 - Google Contacts (CardDAV)
 - Google Drive (Drive REST API)
 - Google Docs (Docs REST API + Drive metadata)
+- Google Sheets (Sheets REST API + Drive file discovery)
 - Google Maps (Maps/Places/Geocoding/Directions APIs)
 
 The application supports two model backends:
@@ -23,11 +24,9 @@ Current OpenAI-compatible (non-Gemini) models:
 - `deepseek-v3-2-251201`
 - `deepseek-r1-250528`
 - `glm-4-7-251222`
-- `glm-5`
 - `kimi-k2-250905`
 - `kimi-k2-thinking-251104`
 - `seed-1-8-251228`
-- `whisper-1`
 - `azure_ai/kimi-k2.5`
 
 Current Gemini models:
@@ -44,10 +43,12 @@ Current Gemini models:
 - Intent-based MCP tool gating (only relevant server tools are sent to the model per request).
 - Runtime MCP policy injection from `docs/mcp-servers/*.md` into system instructions.
 - Multi-round tool-call orchestration for OpenAI-compatible models (tool -> tool -> final answer).
-- Integrated Gmail, Calendar, Contacts, Drive, Docs, and Maps actions.
+- Integrated Gmail, Calendar, Contacts, Drive, Docs, Sheets, and Maps actions.
 - Auto-invite flow: when prompt includes `invite` + email and event is created, app sends invitation via Gmail MCP.
 - Calendar invitation delivery supports `.ics` (`text/calendar`) accept/reject flow.
 - Drive phase 1.1 includes folder creation, text upload, move, user sharing, and public link creation.
+- Docs now supports Word interoperability: discover `.docx/.doc`, read `.docx` directly, and convert Word files to native Google Docs.
+- Sheets phase 2 includes spreadsheet discovery, metadata, tab management, range read/write operations, direct `.xlsx/.xls` read, `.xlsx/.xls` conversion to native Google Sheets, export, batch range operations, spreadsheet sharing, template copy, CSV import, chart insertion, protection, pivot creation, and permission auditing.
 - Contacts search resilience: automatically falls back to HTTP/1.1 when `h2` is unavailable.
 - Tool output truncation before model feedback to reduce context bloat on large tool results.
 - Structured tool-result contract (`success`, `error`, `data`) between MCP tool execution and model context.
@@ -95,6 +96,7 @@ flowchart TD
     TOOL --> MT[contacts_server.py]
     TOOL --> MD[drive_server.py]
     TOOL --> MDO[docs_server.py]
+    TOOL --> MSH[sheets_server.py]
     TOOL --> MM[maps_server.py]
 
     MG --> GI[Gmail IMAP/SMTP]
@@ -102,6 +104,7 @@ flowchart TD
     MT --> GCT[Google Contacts CardDAV]
     MD --> GD[Google Drive REST API]
     MDO --> GDO[Google Docs API]
+    MSH --> GSH[Google Sheets API]
     MM --> GM[Google Maps APIs]
 
     ROUTE --> LLM
@@ -121,6 +124,7 @@ flowchart TD
 - `contacts_server.py`: Contacts MCP wrapper entrypoint.
 - `drive_server.py`: Drive MCP wrapper entrypoint.
 - `docs_server.py`: Docs MCP wrapper entrypoint.
+- `sheets_server.py`: Sheets MCP wrapper entrypoint.
 - `maps_server.py`: Maps MCP wrapper entrypoint.
 - `src/chat_google/chat_service.py`: main orchestration logic.
 - `src/chat_google/ui.py`: Gradio UI composition and event wiring.
@@ -143,6 +147,7 @@ flowchart TD
   - App Password enabled and generated
 - Google Cloud project with Drive API enabled (for `GOOGLE_DRIVE_ACCESS_TOKEN`)
 - Google Cloud project with Google Docs API enabled (for Docs MCP tools)
+- Google Cloud project with Google Sheets API enabled (for Sheets MCP tools)
 - OAuth client credentials (`Desktop app`) for Drive auto-refresh flow
   - `GOOGLE_OAUTH_CLIENT_ID`
   - `GOOGLE_OAUTH_CLIENT_SECRET`
@@ -175,8 +180,8 @@ MODEL=azure_ai/kimi-k2.5
 Variable reference:
 - `GOOGLE_ACCOUNT`: Google account used by Gmail/Calendar/Contacts MCP servers.
 - `GOOGLE_APP_KEY`: Google App Password (16 characters, no spaces).
-- `GOOGLE_DRIVE_ACCESS_TOKEN`: OAuth 2.0 Bearer token for Drive/Docs MCP (not App Password).
-- `GOOGLE_DRIVE_REFRESH_TOKEN`: optional refresh token for automatic Drive/Docs token renewal.
+- `GOOGLE_DRIVE_ACCESS_TOKEN`: OAuth 2.0 Bearer token for Drive/Docs/Sheets MCP (not App Password).
+- `GOOGLE_DRIVE_REFRESH_TOKEN`: optional refresh token for automatic Drive/Docs/Sheets token renewal.
 - `GOOGLE_OAUTH_CLIENT_ID`: OAuth client ID paired with `GOOGLE_DRIVE_REFRESH_TOKEN`.
 - `GOOGLE_OAUTH_CLIENT_SECRET`: OAuth client secret paired with `GOOGLE_DRIVE_REFRESH_TOKEN`.
 - `GOOGLE_MAPS_API_KEY`: Google Maps API key for Maps MCP tools.
@@ -244,11 +249,12 @@ uv run --with google-auth-oauthlib python get_google_drive_access_token.py --cli
 Default scope in this script is full Drive access:
 - `https://www.googleapis.com/auth/drive`
 
-## Google Docs API Setup Notes
+## Google Docs and Sheets API Setup Notes
 
 - Enable `Google Docs API` in the same GCP project as your OAuth credentials.
-- Existing token flow in `get_google_drive_access_token.py` (scope `https://www.googleapis.com/auth/drive`) is compatible with Docs MCP in this repository.
-- Docs MCP and Drive MCP share the same token environment variables.
+- Enable `Google Sheets API` in the same GCP project.
+- Existing token flow in `get_google_drive_access_token.py` (scope `https://www.googleapis.com/auth/drive`) is compatible with Docs/Sheets MCP in this repository.
+- Docs/Sheets MCP and Drive MCP share the same token environment variables.
 
 ## How to Get `GOOGLE_OAUTH_CLIENT_ID` and `GOOGLE_OAUTH_CLIENT_SECRET`
 
@@ -358,6 +364,7 @@ uv run python calendar_server.py
 uv run python contacts_server.py
 uv run python drive_server.py
 uv run python docs_server.py
+uv run python sheets_server.py
 uv run python maps_server.py
 ```
 
@@ -401,7 +408,7 @@ Note:
 - `create_drive_shared_link_to_user(item_id, user_email, role='reader', send_notification=True, message='', expires_in_days=7)`
 - `create_drive_public_link(item_id, role='reader', allow_discovery=False)` (file/folder)
 
-### Docs (Phase 1 + 1.1)
+### Docs (Phase 1 + 1.1 + Word Interop)
 - `list_docs_documents(limit=10)`
 - `search_docs_documents(query, limit=10)`
 - `get_docs_document_metadata(document_id)`
@@ -413,6 +420,36 @@ Note:
 - `export_docs_document(document_id, export_format='pdf', max_chars=8000)` (`txt`, `html`, `pdf`, `docx`)
 - `append_docs_structured_content(document_id, heading='', paragraph='', bullet_items=[], numbered_items=[])`
 - `replace_docs_text_if_revision(document_id, expected_revision_id, find_text, replace_text='', match_case=False)`
+- `list_documents(limit=10, include_word=True)` (native Docs + optional `.docx/.doc`)
+- `search_documents(query, limit=10, include_word=True)` (native Docs + optional `.docx/.doc`)
+- `get_document_metadata(file_id)` (native Docs and Word files)
+- `read_word_document(file_id, max_chars=8000)` (direct `.docx` read)
+- `convert_word_to_google_doc(file_id, new_title='', move_to_parent=True)` (`.docx/.doc` -> native Docs)
+
+### Sheets (Phase 1 + 2)
+- `list_sheets_spreadsheets(limit=10)`
+- `search_sheets_spreadsheets(query, limit=10)`
+- `get_sheets_metadata(spreadsheet_id)`
+- `read_sheet_values(spreadsheet_id, range_a1='A1:Z50', max_rows=50, max_cols=20)`
+- `append_sheet_row(spreadsheet_id, range_a1, values)`
+- `update_sheet_values(spreadsheet_id, range_a1, values, value_input_option='USER_ENTERED')`
+- `create_sheets_spreadsheet(title, sheet_title='Sheet1')`
+- `add_sheet_tab(spreadsheet_id, title, row_count=1000, column_count=26)`
+- `list_spreadsheets(limit=10, include_excel=True)` (native Sheets + optional `.xlsx/.xls`)
+- `search_spreadsheets(query, limit=10, include_excel=True)` (native Sheets + optional `.xlsx/.xls`)
+- `get_spreadsheet_metadata(file_id)` (works for native Sheets and `.xlsx/.xls`)
+- `read_excel_values(file_id, sheet_name='', range_a1='A1:Z50', max_rows=50, max_cols=20)` (reads `.xlsx/.xls` directly)
+- `convert_excel_to_google_sheet(file_id, new_title='', move_to_parent=True)`
+- `export_google_sheet(file_id, export_format='xlsx', gid=None, range_a1='', max_preview_chars=2000)` (`xlsx`, `ods`, `pdf`, `zip`, `csv`, `tsv`)
+- `batch_get_sheet_values(spreadsheet_id, ranges, value_render_option='FORMATTED_VALUE', date_time_render_option='SERIAL_NUMBER', max_rows_per_range=20, max_cols_per_row=20)`
+- `batch_update_sheet_values(spreadsheet_id, updates, value_input_option='USER_ENTERED')`
+- `share_spreadsheet(file_id, user_email, role='writer', send_notification=True, message='')`
+- `create_spreadsheet_from_template(template_file_id, new_title, destination_folder_id='')`
+- `import_csv_to_sheet(spreadsheet_id, sheet_name, csv_text, overwrite=False)`
+- `insert_sheet_chart(spreadsheet_id, sheet_id, chart_spec)`
+- `protect_sheet_or_range(spreadsheet_id, sheet_id=None, range_a1='', editors=[], warning_only=False)`
+- `create_pivot_table(spreadsheet_id, source_range, target_sheet, target_cell='A1', summarize_function='COUNTA')`
+- `get_spreadsheet_permissions(file_id)`
 
 ### Maps
 - `search_places_text(query, limit=5, language='en', region=None)`
@@ -434,6 +471,8 @@ Coverage includes:
 - All Calendar tools
 - All Contacts tools
 - All Drive phase-1 and phase-1.1 tools
+- All Docs tools (including Word `.docx/.doc` interop flows)
+- All Sheets tools (including `.xlsx/.xls` read/convert flows)
 - All Maps tools
 - Core chat orchestration paths (Gemini, OpenAI-compatible, streaming, tool-calls, payload normalization)
 - Default model resolution behavior
@@ -510,7 +549,29 @@ Notes:
 - Ensure token includes Docs/Drive access (existing Drive full scope is compatible).
 - Ensure the authenticated account has access to the target document.
 
-9. Response includes warning about unavailable MCP server
+9. `.docx` / `.doc` file cannot be read with `read_docs_document`
+- `read_docs_document` is only for native Google Docs (`application/vnd.google-apps.document`).
+- Use `read_word_document` for `.docx` files.
+- For legacy `.doc`, run `convert_word_to_google_doc` first, then use `read_docs_document`.
+
+10. Google Sheets tools fail with 401/403
+- Ensure Google Sheets API is enabled in your Google Cloud project.
+- Ensure token includes Sheets/Drive access (existing Drive full scope is compatible).
+- Ensure the authenticated account has access to the target spreadsheet.
+
+11. `.xlsx` / `.xls` file is not readable by `read_sheet_values`
+- `read_sheet_values` is only for native Google Sheets (`application/vnd.google-apps.spreadsheet`).
+- Use `read_excel_values` for `.xlsx/.xls` files, or run `convert_excel_to_google_sheet` first.
+
+12. `export_google_sheet` returns an error or empty preview
+- `export_google_sheet` only exports native Google Sheets files; convert `.xlsx/.xls` first.
+- `csv`/`tsv` previews are text. Binary formats (`xlsx`, `ods`, `pdf`, `zip`) return metadata and byte size without binary preview.
+
+13. `protect_sheet_or_range` / `create_pivot_table` / `insert_sheet_chart` fails with permission errors
+- Ensure the token scope includes full Drive access (`https://www.googleapis.com/auth/drive`) and Sheets API is enabled.
+- Ensure your account has edit access to the spreadsheet (viewer/commenter cannot write structure updates).
+
+11. Response includes warning about unavailable MCP server
 - This appears when your request domain needs a server that failed to initialize.
 - Check `chat_app.log` lines containing `Failed to start MCP server`.
 - Start the affected server manually (`uv run python <server>_server.py`) and retry.
